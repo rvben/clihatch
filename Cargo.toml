@@ -1,0 +1,38 @@
+[package]
+name = "clihatch"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "Scaffold a clispec-compliant, agent-facing Rust CLI in seconds: source skeleton, schema, and the dual-publish release pipeline."
+authors = ["Ruben Jongejan <ruben.jongejan@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/rvben/clihatch"
+homepage = "https://github.com/rvben/clihatch"
+keywords = ["cli", "scaffold", "template", "clispec", "generator"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
+include = ["src/**/*", "templates/**/*", "schemas/**/*", "Cargo.toml", "README.md", "LICENSE"]
+
+[lib]
+name = "clihatch"
+path = "src/lib.rs"
+
+[[bin]]
+name = "clihatch"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.6.1", features = ["derive"] }
+clap_complete = "4.6.5"
+include_dir = "0.7.4"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0.18"
+
+[dev-dependencies]
+jsonschema = { version = "0.46.5", default-features = false }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

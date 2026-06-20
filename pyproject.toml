@@ -1,0 +1,35 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "clihatch"
+dynamic = ["version"]
+description = "Scaffold a clispec-compliant, agent-facing Rust CLI in seconds."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "Ruben J. Jongejan", email = "ruben.jongejan@gmail.com" }
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Utilities",
+    "Topic :: Text Processing",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/rvben/clihatch"
+Repository = "https://github.com/rvben/clihatch"
+
+[tool.maturin]
+bindings = "bin"
+manifest-path = "Cargo.toml"
+strip = true

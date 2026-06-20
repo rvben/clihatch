@@ -1,0 +1,45 @@
+//! Error type, the stable error `kind` set, and the exit-code contract.
+//!
+//! Errors are reported as a clispec structured envelope on the last line of
+//! stderr: `{"error":{"kind":...,"message":...,"exit_code":...,"hint":...}}`.
+//! Add your own variants here as the tool grows; keep `kind()` snake_case and
+//! declare every kind in `schema.rs`.
+
+use thiserror::Error;
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum Error {
+    /// Invalid command-line arguments (also wraps clap errors).
+    #[error("{message}")]
+    Usage { message: String },
+
+    /// Example domain error - replace with your own.
+    #[error("not a number: {input:?}")]
+    InvalidInput { input: String },
+}
+
+impl Error {
+    /// Stable snake_case identifier consumers branch on (the schema `errors` set).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Error::Usage { .. } => "usage",
+            Error::InvalidInput { .. } => "invalid_input",
+        }
+    }
+
+    /// Actionable remediation, when there is one.
+    pub fn hint(&self) -> Option<&'static str> {
+        match self {
+            Error::Usage { .. } => Some("see `{{name}} --help` or `{{name}} schema`"),
+            Error::InvalidInput { .. } => Some("pass an integer, e.g. `{{name}} 21`"),
+        }
+    }
+
+    /// The process exit code associated with this error.
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            Error::InvalidInput { .. } => 1,
+            Error::Usage { .. } => 3,
+        }
+    }
+}

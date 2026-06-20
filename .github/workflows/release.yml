@@ -1,0 +1,266 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run mode (skip actual publishing)'
+        required: false
+        default: true
+        type: boolean
+      skip_crates_io:
+        description: 'Skip publishing to crates.io (if already published)'
+        required: false
+        default: false
+        type: boolean
+      skip_pypi:
+        description: 'Skip publishing to PyPI (if already published)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  # Avoid the intermittent "HTTP2 framing layer" curl errors when cargo fetches
+  # from crates.io on GitHub-hosted runners.
+  CARGO_HTTP_MULTIPLEXING: "false"
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@nextest
+      - name: Verify Cargo.lock is up to date
+        run: cargo check --locked
+      - name: Run tests
+        run: make test
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: test
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-14
+            target: aarch64-apple-darwin
+          # Cross-compiled on Apple Silicon (Intel mac runners are scarce).
+          - os: macos-14
+            target: x86_64-apple-darwin
+            cross: true
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Portable wheels: maturin-action builds linux wheels inside a manylinux
+      # container and macOS wheels natively.
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: auto
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Verify binary
+        # Skip for cross-compiled targets the runner cannot execute.
+        if: ${{ !matrix.cross }}
+        run: ./target/${{ matrix.target }}/release/clihatch --version
+
+      - name: Create release archive
+        shell: bash
+        run: |
+          # GITHUB_REF_NAME is the tag on a release (v1.2.3) and the branch on
+          # a workflow_dispatch dry run (main); both are free of slashes.
+          VERSION="${GITHUB_REF_NAME}"
+          ARCHIVE_NAME="clihatch-${VERSION}-${{ matrix.target }}"
+          mkdir -p release-package
+          cp "target/${{ matrix.target }}/release/clihatch" release-package/clihatch
+          tar -czf "${ARCHIVE_NAME}.tar.gz" -C release-package clihatch
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            shasum -a 256 "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+          else
+            sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+          fi
+          rm -rf release-package
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist/*.whl
+
+      - name: Upload release archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            clihatch-*-${{ matrix.target }}.tar.gz*
+
+  sdist:
+    name: Build source distribution
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Build sdist
+        run: uvx maturin sdist --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [build, sdist]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish to crates.io
+        if: ${{ inputs.dry_run != true && inputs.skip_crates_io != true }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked
+
+      - name: Test crates.io publish (dry run)
+        if: ${{ inputs.dry_run == true && inputs.skip_crates_io != true }}
+        run: cargo publish --dry-run --locked
+
+      - name: Skip crates.io publishing
+        if: ${{ inputs.skip_crates_io == true }}
+        run: echo "Skipping crates.io publishing as requested"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish to PyPI
+        if: ${{ inputs.dry_run != true && inputs.skip_pypi != true }}
+        run: uv publish artifacts/wheel-*/*.whl artifacts/sdist/*.tar.gz
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+
+      - name: Create Release
+        if: ${{ inputs.dry_run != true }}
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/release-*/clihatch-*.tar.gz
+            artifacts/release-*/clihatch-*.tar.gz.sha256
+
+      - name: Dry Run Summary
+        if: ${{ inputs.dry_run == true }}
+        run: |
+          echo "Dry run complete. Artifacts built but nothing published."
+          find artifacts/release-* artifacts/wheel-* artifacts/sdist -type f | sort
+
+  update-homebrew:
+    needs: release
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/artifacts
+
+      - name: Compute SHA256 hashes
+        id: hashes
+        run: |
+          for target in x86_64-apple-darwin aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+            sha=$(cat /tmp/artifacts/release-${target}/clihatch-${{ github.ref_name }}-${target}.tar.gz.sha256 | awk '{print $1}')
+            key=$(echo "${target}" | tr '-' '_')
+            echo "${key}=${sha}" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Update Homebrew formula
+        env:
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION_NUM="${VERSION#v}"
+
+          cat > /tmp/clihatch.rb << 'FORMULA'
+          class Clihatch < Formula
+            desc "Scaffold a clispec-compliant, agent-facing Rust CLI in seconds"
+            homepage "https://github.com/rvben/clihatch"
+            version "VERSION_NUM"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/rvben/clihatch/releases/download/VERSION/clihatch-VERSION-aarch64-apple-darwin.tar.gz"
+                sha256 "SHA_AARCH64_APPLE_DARWIN"
+              else
+                url "https://github.com/rvben/clihatch/releases/download/VERSION/clihatch-VERSION-x86_64-apple-darwin.tar.gz"
+                sha256 "SHA_X86_64_APPLE_DARWIN"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/rvben/clihatch/releases/download/VERSION/clihatch-VERSION-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "SHA_AARCH64_UNKNOWN_LINUX_GNU"
+              else
+                url "https://github.com/rvben/clihatch/releases/download/VERSION/clihatch-VERSION-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "SHA_X86_64_UNKNOWN_LINUX_GNU"
+              end
+            end
+
+            def install
+              bin.install "clihatch"
+            end
+
+            test do
+              system "#{bin}/clihatch", "--version"
+            end
+          end
+          FORMULA
+
+          sed -i "s/VERSION_NUM/${VERSION_NUM}/g" /tmp/clihatch.rb
+          sed -i "s/VERSION/${VERSION}/g" /tmp/clihatch.rb
+          sed -i "s/SHA_AARCH64_APPLE_DARWIN/${{ steps.hashes.outputs.aarch64_apple_darwin }}/g" /tmp/clihatch.rb
+          sed -i "s/SHA_X86_64_APPLE_DARWIN/${{ steps.hashes.outputs.x86_64_apple_darwin }}/g" /tmp/clihatch.rb
+          sed -i "s/SHA_AARCH64_UNKNOWN_LINUX_GNU/${{ steps.hashes.outputs.aarch64_unknown_linux_gnu }}/g" /tmp/clihatch.rb
+          sed -i "s/SHA_X86_64_UNKNOWN_LINUX_GNU/${{ steps.hashes.outputs.x86_64_unknown_linux_gnu }}/g" /tmp/clihatch.rb
+
+          mkdir -p ~/.ssh
+          echo "$HOMEBREW_TAP_DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+          git clone git@github.com:rvben/homebrew-tap.git /tmp/tap
+          mkdir -p /tmp/tap/Formula
+          cp /tmp/clihatch.rb /tmp/tap/Formula/clihatch.rb
+          cd /tmp/tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/clihatch.rb
+          git diff --cached --quiet || git commit -m "Update clihatch to ${VERSION}"
+          git push

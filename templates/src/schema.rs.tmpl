@@ -1,0 +1,68 @@
+//! The clispec v0.2 contract emitted by `{{name}} schema`.
+//!
+//! Conforms to <https://clispec.dev/schema/v0.2.json> (validated by a test
+//! against the vendored copy in `schemas/clispec-v0.2.json`). Keep this in sync
+//! as you add commands, arguments, and error kinds.
+
+use serde_json::{Value, json};
+
+/// The version of The CLI Spec this document conforms to.
+pub const CLISPEC_VERSION: &str = "0.2";
+
+/// Build the clispec contract as a JSON value.
+pub fn contract() -> Value {
+    json!({
+        "clispec": CLISPEC_VERSION,
+        "name": env!("CARGO_PKG_NAME"),
+        "version": env!("CARGO_PKG_VERSION"),
+        "description": env!("CARGO_PKG_DESCRIPTION"),
+        "global_args": [
+            {
+                "name": "--output",
+                "type": "string",
+                "enum": ["auto", "json", "text"],
+                "default": "auto",
+                "description": "Output format. auto = text on a TTY, JSON when piped."
+            }
+        ],
+        "commands": [
+            {
+                "name": "run",
+                "description": "Double an integer. The default command, invoked as `{{name}} <value>`. Replace this with your own logic.",
+                "mutating": false,
+                "stability": "stable",
+                "args": [
+                    {"name": "value", "type": "integer", "required": true, "description": "The integer to double."}
+                ],
+                "output_fields": [
+                    {"name": "value", "type": "integer"},
+                    {"name": "doubled", "type": "integer"}
+                ]
+            },
+            {
+                "name": "schema",
+                "description": "Print this clispec contract as JSON.",
+                "mutating": false,
+                "stability": "stable"
+            },
+            {
+                "name": "completions",
+                "description": "Generate a shell completion script.",
+                "mutating": false,
+                "stability": "stable",
+                "args": [
+                    {"name": "shell", "type": "string", "required": true, "enum": ["bash", "zsh", "fish", "powershell", "elvish"], "description": "Target shell."}
+                ]
+            }
+        ],
+        "errors": [
+            {"kind": "usage", "exit_code": 3, "retryable": false, "description": "Invalid command-line arguments."},
+            {"kind": "invalid_input", "exit_code": 1, "retryable": false, "description": "The argument was not an integer."}
+        ]
+    })
+}
+
+/// The contract as a pretty-printed JSON string.
+pub fn contract_json() -> String {
+    serde_json::to_string_pretty(&contract()).expect("contract serializes")
+}

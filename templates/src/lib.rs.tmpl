@@ -1,0 +1,38 @@
+//! {{name}}: {{description}}
+//!
+//! The whole pipeline is reachable through [`run`], which the CLI and the tests
+//! both use. Replace the example logic with your own.
+
+mod error;
+pub mod schema;
+
+pub use error::Error;
+
+/// Rendered output format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    Text,
+    Json,
+}
+
+/// A complete request. Grow this with your own fields.
+#[derive(Debug, Clone)]
+pub struct Request {
+    pub value: String,
+    pub format: OutputFormat,
+}
+
+/// Run the command and return the rendered output (no trailing newline).
+///
+/// Example logic: parse `value` as an integer and double it. Replace this.
+pub fn run(req: &Request) -> Result<String, Error> {
+    let value: i64 = req.value.parse().map_err(|_| Error::InvalidInput {
+        input: req.value.clone(),
+    })?;
+    let doubled = value.saturating_mul(2);
+
+    Ok(match req.format {
+        OutputFormat::Json => serde_json::json!({ "value": value, "doubled": doubled }).to_string(),
+        OutputFormat::Text => format!("{value} doubled is {doubled}"),
+    })
+}

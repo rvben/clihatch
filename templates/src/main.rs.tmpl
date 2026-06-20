@@ -1,0 +1,146 @@
+//! {{name}} CLI.
+//!
+//! Follows The CLI Spec (clispec.dev): text on a TTY, JSON when piped,
+//! structured error envelopes on the last line of stderr, a `schema`
+//! subcommand, and mutation markers. Replace the example `run` logic with
+//! your own.
+
+use std::io::{IsTerminal, Write};
+use std::process::ExitCode;
+
+use clap::error::ErrorKind as ClapErrorKind;
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use serde_json::json;
+use {{name_snake}}::{Error, OutputFormat, Request, run, schema};
+
+#[derive(Parser)]
+#[command(
+    name = "{{name}}",
+    version,
+    about = "{{description}}",
+    long_about = "{{description}}\n\nRun `{{name}} schema` for the machine-readable contract (clispec.dev).",
+    args_conflicts_with_subcommands = true,
+    subcommand_negates_reqs = true
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    /// The integer to double (the default command). Replace with your own args.
+    #[arg(value_name = "VALUE")]
+    value: Option<String>,
+
+    /// Output format; auto = text on a TTY, JSON when piped.
+    #[arg(long, short = 'o', value_enum, default_value = "auto", global = true)]
+    output: CliOutput,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Print the machine-readable contract (clispec.dev) as JSON.
+    Schema,
+    /// Generate a shell completion script.
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum CliOutput {
+    Auto,
+    Json,
+    Text,
+}
+
+impl CliOutput {
+    fn resolve(self) -> OutputFormat {
+        match self {
+            CliOutput::Json => OutputFormat::Json,
+            CliOutput::Text => OutputFormat::Text,
+            CliOutput::Auto => {
+                if std::io::stdout().is_terminal() {
+                    OutputFormat::Text
+                } else {
+                    OutputFormat::Json
+                }
+            }
+        }
+    }
+}
+
+fn main() -> ExitCode {
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => return handle_clap_error(e),
+    };
+
+    match &cli.command {
+        Some(Command::Schema) => {
+            println!("{}", schema::contract_json());
+            return ExitCode::SUCCESS;
+        }
+        Some(Command::Completions { shell }) => {
+            let mut cmd = Cli::command();
+            let name = cmd.get_name().to_string();
+            clap_complete::generate(*shell, &mut cmd, name, &mut std::io::stdout());
+            return ExitCode::SUCCESS;
+        }
+        None => {}
+    }
+
+    let Some(value) = cli.value.clone() else {
+        let err = Error::Usage {
+            message: "no value given (try `{{name}} 21`)".into(),
+        };
+        emit_error(&err);
+        return ExitCode::from(err.exit_code() as u8);
+    };
+
+    let request = Request {
+        value,
+        format: cli.output.resolve(),
+    };
+    match run(&request) {
+        Ok(output) => {
+            let _ = writeln!(std::io::stdout(), "{output}");
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            emit_error(&err);
+            ExitCode::from(err.exit_code() as u8)
+        }
+    }
+}
+
+/// Help and version print normally and exit 0; every other clap failure becomes
+/// a structured `usage` error envelope.
+fn handle_clap_error(e: clap::Error) -> ExitCode {
+    match e.kind() {
+        ClapErrorKind::DisplayHelp
+        | ClapErrorKind::DisplayVersion
+        | ClapErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+            let _ = e.print();
+            ExitCode::SUCCESS
+        }
+        _ => {
+            let err = Error::Usage {
+                message: e.to_string().trim().to_string(),
+            };
+            emit_error(&err);
+            ExitCode::from(err.exit_code() as u8)
+        }
+    }
+}
+
+/// Write the clispec error envelope as the last line of stderr.
+fn emit_error(err: &Error) {
+    let mut error = serde_json::Map::new();
+    error.insert("kind".into(), json!(err.kind()));
+    error.insert("message".into(), json!(err.to_string()));
+    error.insert("exit_code".into(), json!(err.exit_code()));
+    if let Some(hint) = err.hint() {
+        error.insert("hint".into(), json!(hint));
+    }
+    eprintln!("{}", json!({ "error": error }));
+}

@@ -1,0 +1,65 @@
+//! End-to-end tests of the compiled binary: the clispec contract, the example
+//! command, and the error/exit-code envelope. Replace these as you replace the
+//! example logic.
+
+use std::process::Command;
+
+const BIN: &str = env!("CARGO_BIN_EXE_{{name}}");
+
+struct Output {
+    code: i32,
+    stdout: String,
+    stderr: String,
+}
+
+fn run(args: &[&str]) -> Output {
+    let out = Command::new(BIN).args(args).output().expect("spawn binary");
+    Output {
+        code: out.status.code().unwrap(),
+        stdout: String::from_utf8(out.stdout).unwrap(),
+        stderr: String::from_utf8(out.stderr).unwrap(),
+    }
+}
+
+fn error_envelope(stderr: &str) -> serde_json::Value {
+    let last = stderr.lines().last().expect("stderr has an error line");
+    serde_json::from_str::<serde_json::Value>(last).expect("error envelope is JSON")["error"].clone()
+}
+
+#[test]
+fn schema_is_clispec_v0_2() {
+    let out = run(&["schema"]);
+    assert_eq!(out.code, 0);
+    let v: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(v["clispec"], "0.2");
+}
+
+#[test]
+fn help_mentions_schema() {
+    let out = run(&["--help"]);
+    assert_eq!(out.code, 0);
+    assert!(out.stdout.contains("schema"));
+}
+
+#[test]
+fn run_doubles_the_value() {
+    let out = run(&["21"]);
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    let v: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(v["value"], 21);
+    assert_eq!(v["doubled"], 42);
+}
+
+#[test]
+fn invalid_input_exits_1() {
+    let out = run(&["abc"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(error_envelope(&out.stderr)["kind"], "invalid_input");
+}
+
+#[test]
+fn no_value_exits_3() {
+    let out = run(&[]);
+    assert_eq!(out.code, 3);
+    assert_eq!(error_envelope(&out.stderr)["kind"], "usage");
+}
