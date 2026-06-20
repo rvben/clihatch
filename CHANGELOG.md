@@ -1,0 +1,11 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/).
+
+## [0.1.0] - 2026-06-20
+
+### Added
+
+- clihatch - scaffold a clispec-compliant Rust CLI ([a6aabe2](https://github.com/rvben/clihatch/commit/a6aabe20e0d7d81c1fa0074d3d87fdf6bc7c1fbe))
