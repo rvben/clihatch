@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+## [0.1.3](https://github.com/rvben/clihatch/compare/v0.1.2...v0.1.3) - 2026-06-21
+
+### Added
+
+- **secrets**: read PyPI token from ~/.pypirc ([0caedd9](https://github.com/rvben/clihatch/commit/0caedd99bfe8a7b048671650990a59d3495c48aa))
+
 ## [0.1.2](https://github.com/rvben/clihatch/compare/v0.1.1...v0.1.2) - 2026-06-21
 
 ### Added
