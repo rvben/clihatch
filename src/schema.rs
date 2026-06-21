@@ -33,13 +33,15 @@ pub fn contract() -> Value {
                     {"name": "--owner", "type": "string", "required": false, "default": "rvben", "description": "GitHub owner for repo URLs."},
                     {"name": "--author", "type": "string", "required": false, "description": "Cargo/LICENSE author (default: git config)."},
                     {"name": "--into", "type": "path", "required": false, "default": ".", "description": "Directory to create the crate inside."},
-                    {"name": "--no-git", "type": "boolean", "required": false, "default": false, "description": "Skip git init + initial commit."}
+                    {"name": "--no-git", "type": "boolean", "required": false, "default": false, "description": "Skip git init + initial commit."},
+                    {"name": "--github", "type": "boolean", "required": false, "default": false, "description": "Also create the GitHub repo (owner/name) and push the initial commit. Requires git."}
                 ],
                 "output_fields": [
                     {"name": "created", "type": "string", "description": "Path of the new crate directory."},
                     {"name": "files", "type": "string[]", "description": "Files written, relative to the crate."},
                     {"name": "committed", "type": "boolean"},
-                    {"name": "next", "type": "string[]", "description": "Suggested next commands."}
+                    {"name": "repo", "type": "string", "description": "The owner/name of the GitHub repo created with --github (null otherwise)."},
+                    {"name": "next", "type": "string[]", "description": "Suggested next commands, through to a published release."}
                 ]
             },
             {

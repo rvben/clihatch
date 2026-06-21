@@ -34,6 +34,14 @@ pub enum ClihatchError {
 }
 
 impl ClihatchError {
+    /// Build a `Backend` error from an external tool's (trimmed) message.
+    pub fn backend(tool: &'static str, message: impl Into<String>) -> Self {
+        ClihatchError::Backend {
+            tool,
+            message: message.into().trim().to_string(),
+        }
+    }
+
     /// Stable snake_case identifier consumers branch on (the schema `errors` set).
     pub fn kind(&self) -> &'static str {
         match self {

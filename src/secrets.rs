@@ -7,16 +7,15 @@
 //!
 //! Two seams keep this testable offline:
 //! - [`SecretOps`] - the orchestration substitutes a fake backend;
-//! - [`CommandRunner`] - the real backend's `gh` / `ssh-keygen` invocations are
-//!   recorded and asserted without spawning anything.
+//! - [`crate::process::CommandRunner`] - the real backend's `gh` / `ssh-keygen`
+//!   invocations are recorded and asserted without spawning anything.
 
 use std::fs;
-use std::io::Write;
-use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::ClihatchError;
+use crate::process::{CmdOutput, CommandRunner, SystemRunner};
 
 /// External side effects a secrets run performs.
 pub trait SecretOps {
@@ -185,51 +184,6 @@ pub fn pypi_token_from_pypirc(pypirc: &str) -> Option<String> {
     None
 }
 
-/// The result of running an external command.
-#[derive(Debug, Clone)]
-pub struct CmdOutput {
-    pub success: bool,
-    pub stdout: String,
-    pub stderr: String,
-}
-
-/// Runs external commands. The seam beneath [`RealSecretOps`]: tests record the
-/// exact argv and stdin and return canned output, so the `gh` / `ssh-keygen`
-/// invocations are verified without spawning anything.
-pub trait CommandRunner {
-    fn run(&self, program: &str, args: &[&str], stdin: Option<&str>) -> std::io::Result<CmdOutput>;
-}
-
-/// Runs commands as real subprocesses.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SystemRunner;
-
-impl CommandRunner for SystemRunner {
-    fn run(&self, program: &str, args: &[&str], stdin: Option<&str>) -> std::io::Result<CmdOutput> {
-        let mut cmd = Command::new(program);
-        cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
-        cmd.stdin(if stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        });
-        let mut child = cmd.spawn()?;
-        if let Some(data) = stdin {
-            child
-                .stdin
-                .take()
-                .expect("piped stdin")
-                .write_all(data.as_bytes())?;
-        }
-        let out = child.wait_with_output()?;
-        Ok(CmdOutput {
-            success: out.status.success(),
-            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-        })
-    }
-}
-
 /// The real backend: `gh` for secrets/deploy-keys, `ssh-keygen` for the key.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RealSecretOps<R = SystemRunner> {
@@ -253,14 +207,7 @@ impl<R: CommandRunner> RealSecretOps<R> {
     fn gh(&self, args: &[&str]) -> Result<CmdOutput, ClihatchError> {
         self.runner
             .run("gh", args, None)
-            .map_err(|e| backend("gh", e))
-    }
-}
-
-fn backend(tool: &'static str, message: impl ToString) -> ClihatchError {
-    ClihatchError::Backend {
-        tool,
-        message: message.to_string().trim().to_string(),
+            .map_err(|e| ClihatchError::backend("gh", e.to_string()))
     }
 }
 
@@ -297,11 +244,11 @@ impl<R: CommandRunner> SecretOps for RealSecretOps<R> {
         let out = self
             .runner
             .run("gh", &["secret", "set", name, "-R", repo], Some(value))
-            .map_err(|e| backend("gh", e))?;
+            .map_err(|e| ClihatchError::backend("gh", e.to_string()))?;
         if out.success {
             Ok(())
         } else {
-            Err(backend("gh", out.stderr))
+            Err(ClihatchError::backend("gh", out.stderr))
         }
     }
 
@@ -324,9 +271,9 @@ impl<R: CommandRunner> SecretOps for RealSecretOps<R> {
                 ],
                 None,
             )
-            .map_err(|e| backend("ssh-keygen", e))?;
+            .map_err(|e| ClihatchError::backend("ssh-keygen", e.to_string()))?;
         if !out.success {
-            return Err(backend("ssh-keygen", out.stderr));
+            return Err(ClihatchError::backend("ssh-keygen", out.stderr));
         }
         let private_key = fs::read_to_string(&base).map_err(|e| ClihatchError::Io {
             message: e.to_string(),
@@ -357,16 +304,16 @@ impl<R: CommandRunner> SecretOps for RealSecretOps<R> {
             "id,title",
         ])?;
         if !listed.success {
-            return Err(backend("gh", listed.stderr));
+            return Err(ClihatchError::backend("gh", listed.stderr));
         }
         let keys: Vec<DeployKey> = serde_json::from_str(&listed.stdout)
-            .map_err(|e| backend("gh", format!("parsing deploy-key list: {e}")))?;
+            .map_err(|e| ClihatchError::backend("gh", format!("parsing deploy-key list: {e}")))?;
         let mut rotated = false;
         for key in keys.iter().filter(|k| k.title == title) {
             let id = key.id.to_string();
             let del = self.gh(&["repo", "deploy-key", "delete", &id, "-R", tap])?;
             if !del.success {
-                return Err(backend("gh", del.stderr));
+                return Err(ClihatchError::backend("gh", del.stderr));
             }
             rotated = true;
         }
@@ -392,7 +339,7 @@ impl<R: CommandRunner> SecretOps for RealSecretOps<R> {
         if added.success {
             Ok(rotated)
         } else {
-            Err(backend("gh", added.stderr))
+            Err(ClihatchError::backend("gh", added.stderr))
         }
     }
 }
@@ -704,7 +651,11 @@ mod tests {
     /// the temp files are cleaned up.
     #[test]
     fn real_generate_keypair_produces_an_ed25519_pair() {
-        if Command::new("ssh-keygen").arg("-?").output().is_err() {
+        if std::process::Command::new("ssh-keygen")
+            .arg("-?")
+            .output()
+            .is_err()
+        {
             eprintln!("skipping: ssh-keygen not available");
             return;
         }

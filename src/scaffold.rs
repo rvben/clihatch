@@ -75,9 +75,12 @@ fn capitalize(s: &str) -> String {
 /// What was created.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
+    pub name: String,
     pub dir: String,
     pub files: Vec<String>,
     pub committed: bool,
+    /// The `owner/name` of the GitHub repo created with `--github`, if any.
+    pub repo: Option<String>,
 }
 
 /// Scaffold a new crate into `into/<name>`. Refuses if the directory exists.
@@ -107,9 +110,11 @@ pub fn scaffold(into: &Path, vars: &Vars, git: bool) -> Result<Outcome, Clihatch
     };
 
     Ok(Outcome {
+        name: vars.name.clone(),
         dir: dir.display().to_string(),
         files,
         committed,
+        repo: None,
     })
 }
 

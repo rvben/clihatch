@@ -6,13 +6,15 @@
 //! both use.
 
 mod error;
+mod github;
 mod output;
+mod process;
 mod scaffold;
 pub mod schema;
 mod secrets;
 
 pub use error::ClihatchError;
-pub use output::{render, render_secrets};
+pub use output::{next_steps, render, render_secrets};
 pub use scaffold::{Outcome, Vars, scaffold};
 pub use secrets::{
     RealSecretOps, SecretOps, SecretReport, Skip, Sources, bootstrap, cargo_token_from_credentials,
@@ -39,11 +41,18 @@ pub struct Request {
     /// Directory the new `<name>/` crate is created inside.
     pub into: PathBuf,
     pub git: bool,
+    /// Create the GitHub repo (`owner/name`) and push the initial commit.
+    pub github: bool,
 }
 
-/// Scaffold a new crate from the request.
+/// Scaffold a new crate from the request, optionally creating its GitHub repo.
 pub fn run(req: &Request) -> Result<Outcome, ClihatchError> {
     validate_name(&req.name)?;
+    if req.github && !req.git {
+        return Err(ClihatchError::Usage {
+            message: "--github needs the initial commit; remove --no-git".into(),
+        });
+    }
     let vars = Vars::new(
         &req.name,
         &req.description,
@@ -51,7 +60,18 @@ pub fn run(req: &Request) -> Result<Outcome, ClihatchError> {
         &req.author,
         &req.year,
     );
-    scaffold(&req.into, &vars, req.git)
+    let mut outcome = scaffold(&req.into, &vars, req.git)?;
+    if req.github {
+        let dir = req.into.join(&req.name);
+        outcome.repo = Some(github::create_repo(
+            &process::SystemRunner,
+            &req.owner,
+            &req.name,
+            &req.description,
+            &dir,
+        )?);
+    }
+    Ok(outcome)
 }
 
 /// Crate-name rules: `[a-z][a-z0-9_-]*`, matching what crates.io accepts.
@@ -74,7 +94,26 @@ fn validate_name(name: &str) -> Result<(), ClihatchError> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_name;
+    use super::{Request, run, validate_name};
+    use std::path::PathBuf;
+
+    #[test]
+    fn github_without_git_is_a_usage_error() {
+        let req = Request {
+            name: "demo".into(),
+            description: "d".into(),
+            owner: "rvben".into(),
+            author: "A <a@b.c>".into(),
+            year: "2026".into(),
+            into: PathBuf::from("/tmp/does-not-matter"),
+            git: false,
+            github: true,
+        };
+        let err = run(&req).expect_err("--github with --no-git must fail");
+        assert_eq!(err.kind(), "usage");
+        // Fails fast, before touching the filesystem.
+        assert!(!PathBuf::from("/tmp/does-not-matter/demo").exists());
+    }
 
     #[test]
     fn accepts_good_names() {

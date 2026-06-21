@@ -58,6 +58,9 @@ enum Command {
         /// Skip git init + initial commit.
         #[arg(long)]
         no_git: bool,
+        /// Also create the GitHub repo (owner/name) and push the initial commit.
+        #[arg(long)]
+        github: bool,
     },
     /// Bootstrap a repo's release secrets (Homebrew deploy key, cargo + PyPI tokens).
     Secrets {
@@ -133,6 +136,7 @@ fn main() -> ExitCode {
             author,
             into,
             no_git,
+            github,
         }) => {
             let request = Request {
                 description: description
@@ -143,6 +147,7 @@ fn main() -> ExitCode {
                 owner,
                 into,
                 git: !no_git,
+                github,
             };
             match run(&request) {
                 Ok(outcome) => {

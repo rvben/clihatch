@@ -21,6 +21,7 @@ fn request(into: &Path, name: &str) -> Request {
         year: "2026".into(),
         into: into.to_path_buf(),
         git: false,
+        github: false,
     }
 }
 

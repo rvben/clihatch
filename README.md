@@ -24,7 +24,22 @@ cd my-tool && make check      # lint + tests pass out of the box
 ```
 
 Options: `--description`, `--owner` (default `rvben`), `--author` (default: git
-config), `--into <dir>`, `--no-git`.
+config), `--into <dir>`, `--no-git`, `--github`.
+
+The whole path from nothing to a published release is four steps, and `clihatch`
+does three of them:
+
+```sh
+clihatch new my-tool --github   # scaffold + git commit + create & push the repo
+cd my-tool && make check        # lint + tests, green out of the box
+clihatch secrets my-tool        # bootstrap the three release secrets
+vership release                 # tag + dual-publish
+```
+
+`--github` creates the public `owner/name` repo and pushes the initial commit
+(via `gh`), so `clihatch secrets` can run immediately. Without it, `clihatch new`
+prints the exact `gh repo create` command in its next-steps. Every `new` run
+lists the remaining steps through to a release.
 
 ### Bootstrap release secrets
 
