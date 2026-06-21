@@ -1,28 +1,40 @@
 //! Bootstrap a repo's three release secrets:
 //! - `HOMEBREW_TAP_DEPLOY_KEY` - generate an ed25519 key, register it as a
-//!   write deploy key on the tap, store the private key (fully automated);
+//!   write deploy key on the tap (rotating any prior key with the same title),
+//!   and store the private key (fully automated);
 //! - `CARGO_REGISTRY_TOKEN` - from `~/.cargo/credentials.toml`;
 //! - `PYPI_API_TOKEN` - from the environment / stdin.
 //!
-//! [`SecretOps`] is the seam: the real backend shells out to `gh` and
-//! `ssh-keygen`; tests substitute a fake and exercise the orchestration
-//! offline.
+//! Two seams keep this testable offline:
+//! - [`SecretOps`] - the orchestration substitutes a fake backend;
+//! - [`CommandRunner`] - the real backend's `gh` / `ssh-keygen` invocations are
+//!   recorded and asserted without spawning anything.
 
 use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::ClihatchError;
 
 /// External side effects a secrets run performs.
 pub trait SecretOps {
+    /// Verify prerequisites (auth, repo access) before any mutation.
+    fn preflight(&self, _repo: &str) -> Result<(), ClihatchError> {
+        Ok(())
+    }
     fn set_secret(&self, repo: &str, name: &str, value: &str) -> Result<(), ClihatchError>;
     /// Generate an ed25519 keypair, returning `(private_key, public_key)`.
     fn generate_keypair(&self, comment: &str) -> Result<(String, String), ClihatchError>;
-    fn add_deploy_key(&self, tap: &str, title: &str, public_key: &str)
-    -> Result<(), ClihatchError>;
+    /// Register `public_key` as a write deploy key on `tap`, first removing any
+    /// existing key with the same `title`. Returns `true` if a key was rotated.
+    fn add_deploy_key(
+        &self,
+        tap: &str,
+        title: &str,
+        public_key: &str,
+    ) -> Result<bool, ClihatchError>;
 }
 
 /// The tokens and targets a run draws on.
@@ -48,10 +60,12 @@ pub struct SecretReport {
     pub dry_run: bool,
     pub set: Vec<String>,
     pub skipped: Vec<Skip>,
+    /// Side notes worth surfacing (e.g. a rotated deploy key).
+    pub notes: Vec<String>,
 }
 
-/// Set the release secrets on `repo`. In a dry run nothing is executed and no
-/// key is generated; the report shows what would happen.
+/// Set the release secrets on `repo`. In a dry run nothing is executed, no key
+/// is generated, and no preflight runs; the report shows what would happen.
 pub fn bootstrap(
     ops: &dyn SecretOps,
     repo: &str,
@@ -60,6 +74,11 @@ pub fn bootstrap(
 ) -> Result<SecretReport, ClihatchError> {
     let mut set = Vec::new();
     let mut skipped = Vec::new();
+    let mut notes = Vec::new();
+
+    if !dry_run {
+        ops.preflight(repo)?;
+    }
 
     match &sources.cargo_token {
         Some(token) => {
@@ -78,7 +97,12 @@ pub fn bootstrap(
     if !dry_run {
         let title = format!("{} release (CI push)", sources.crate_name);
         let (private_key, public_key) = ops.generate_keypair(&title)?;
-        ops.add_deploy_key(&sources.tap, &title, &public_key)?;
+        if ops.add_deploy_key(&sources.tap, &title, &public_key)? {
+            notes.push(format!(
+                "rotated existing deploy key {title:?} on {}",
+                sources.tap
+            ));
+        }
         ops.set_secret(repo, "HOMEBREW_TAP_DEPLOY_KEY", &private_key)?;
     }
     set.push("HOMEBREW_TAP_DEPLOY_KEY".to_string());
@@ -101,6 +125,7 @@ pub fn bootstrap(
         dry_run,
         set,
         skipped,
+        notes,
     })
 }
 
@@ -134,43 +159,123 @@ pub fn cargo_token_from_credentials(toml: &str) -> Option<String> {
     fallback
 }
 
-/// The real backend: `gh` for secrets/deploy-keys, `ssh-keygen` for the key.
-pub struct RealSecretOps;
+/// The result of running an external command.
+#[derive(Debug, Clone)]
+pub struct CmdOutput {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
 
-fn backend(tool: &'static str, stderr: &[u8]) -> ClihatchError {
-    ClihatchError::Backend {
-        tool,
-        message: String::from_utf8_lossy(stderr).trim().to_string(),
+/// Runs external commands. The seam beneath [`RealSecretOps`]: tests record the
+/// exact argv and stdin and return canned output, so the `gh` / `ssh-keygen`
+/// invocations are verified without spawning anything.
+pub trait CommandRunner {
+    fn run(&self, program: &str, args: &[&str], stdin: Option<&str>) -> std::io::Result<CmdOutput>;
+}
+
+/// Runs commands as real subprocesses.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemRunner;
+
+impl CommandRunner for SystemRunner {
+    fn run(&self, program: &str, args: &[&str], stdin: Option<&str>) -> std::io::Result<CmdOutput> {
+        let mut cmd = Command::new(program);
+        cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
+        let mut child = cmd.spawn()?;
+        if let Some(data) = stdin {
+            child
+                .stdin
+                .take()
+                .expect("piped stdin")
+                .write_all(data.as_bytes())?;
+        }
+        let out = child.wait_with_output()?;
+        Ok(CmdOutput {
+            success: out.status.success(),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        })
     }
 }
 
-impl SecretOps for RealSecretOps {
-    fn set_secret(&self, repo: &str, name: &str, value: &str) -> Result<(), ClihatchError> {
-        let mut child = Command::new("gh")
-            .args(["secret", "set", name, "-R", repo])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| ClihatchError::Backend {
+/// The real backend: `gh` for secrets/deploy-keys, `ssh-keygen` for the key.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RealSecretOps<R = SystemRunner> {
+    runner: R,
+}
+
+impl RealSecretOps<SystemRunner> {
+    pub fn new() -> Self {
+        Self {
+            runner: SystemRunner,
+        }
+    }
+}
+
+impl<R: CommandRunner> RealSecretOps<R> {
+    /// Build a backend over a specific command runner (used by tests).
+    pub fn with_runner(runner: R) -> Self {
+        Self { runner }
+    }
+
+    fn gh(&self, args: &[&str]) -> Result<CmdOutput, ClihatchError> {
+        self.runner
+            .run("gh", args, None)
+            .map_err(|e| backend("gh", e))
+    }
+}
+
+fn backend(tool: &'static str, message: impl ToString) -> ClihatchError {
+    ClihatchError::Backend {
+        tool,
+        message: message.to_string().trim().to_string(),
+    }
+}
+
+/// One deploy key as reported by `gh repo deploy-key list --json id,title`.
+#[derive(Debug, Deserialize)]
+struct DeployKey {
+    id: i64,
+    title: String,
+}
+
+impl<R: CommandRunner> SecretOps for RealSecretOps<R> {
+    fn preflight(&self, repo: &str) -> Result<(), ClihatchError> {
+        let auth = self.gh(&["auth", "status"])?;
+        if !auth.success {
+            return Err(ClihatchError::Backend {
                 tool: "gh",
-                message: e.to_string(),
-            })?;
-        child
-            .stdin
-            .take()
-            .expect("piped stdin")
-            .write_all(value.as_bytes())
-            .map_err(|e| ClihatchError::Io {
-                message: e.to_string(),
-            })?;
-        let out = child.wait_with_output().map_err(|e| ClihatchError::Io {
-            message: e.to_string(),
-        })?;
-        if out.status.success() {
+                message: "not authenticated; run `gh auth login`".into(),
+            });
+        }
+        let view = self.gh(&["repo", "view", repo, "--json", "name"])?;
+        if !view.success {
+            return Err(ClihatchError::Backend {
+                tool: "gh",
+                message: format!(
+                    "repo {repo} not found or inaccessible: {}",
+                    view.stderr.trim()
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    fn set_secret(&self, repo: &str, name: &str, value: &str) -> Result<(), ClihatchError> {
+        let out = self
+            .runner
+            .run("gh", &["secret", "set", name, "-R", repo], Some(value))
+            .map_err(|e| backend("gh", e))?;
+        if out.success {
             Ok(())
         } else {
-            Err(backend("gh", &out.stderr))
+            Err(backend("gh", out.stderr))
         }
     }
 
@@ -178,30 +283,24 @@ impl SecretOps for RealSecretOps {
         let base = std::env::temp_dir().join(format!("clihatch-key-{}", std::process::id()));
         let pubp = base.with_file_name(format!(
             "{}.pub",
-            base.file_name().unwrap().to_string_lossy()
+            base.file_name().expect("temp file name").to_string_lossy()
         ));
         let _ = fs::remove_file(&base);
         let _ = fs::remove_file(&pubp);
 
-        let out = Command::new("ssh-keygen")
-            .args([
-                "-t",
-                "ed25519",
-                "-f",
-                &base.to_string_lossy(),
-                "-N",
-                "",
-                "-C",
-                comment,
-                "-q",
-            ])
-            .output()
-            .map_err(|e| ClihatchError::Backend {
-                tool: "ssh-keygen",
-                message: e.to_string(),
-            })?;
-        if !out.status.success() {
-            return Err(backend("ssh-keygen", &out.stderr));
+        let base_str = base.to_string_lossy().into_owned();
+        let out = self
+            .runner
+            .run(
+                "ssh-keygen",
+                &[
+                    "-t", "ed25519", "-f", &base_str, "-N", "", "-C", comment, "-q",
+                ],
+                None,
+            )
+            .map_err(|e| backend("ssh-keygen", e))?;
+        if !out.success {
+            return Err(backend("ssh-keygen", out.stderr));
         }
         let private_key = fs::read_to_string(&base).map_err(|e| ClihatchError::Io {
             message: e.to_string(),
@@ -219,34 +318,55 @@ impl SecretOps for RealSecretOps {
         tap: &str,
         title: &str,
         public_key: &str,
-    ) -> Result<(), ClihatchError> {
+    ) -> Result<bool, ClihatchError> {
+        // Rotate: drop any existing key with this title so the stored secret and
+        // the registered key always match.
+        let listed = self.gh(&[
+            "repo",
+            "deploy-key",
+            "list",
+            "-R",
+            tap,
+            "--json",
+            "id,title",
+        ])?;
+        if !listed.success {
+            return Err(backend("gh", listed.stderr));
+        }
+        let keys: Vec<DeployKey> = serde_json::from_str(&listed.stdout)
+            .map_err(|e| backend("gh", format!("parsing deploy-key list: {e}")))?;
+        let mut rotated = false;
+        for key in keys.iter().filter(|k| k.title == title) {
+            let id = key.id.to_string();
+            let del = self.gh(&["repo", "deploy-key", "delete", &id, "-R", tap])?;
+            if !del.success {
+                return Err(backend("gh", del.stderr));
+            }
+            rotated = true;
+        }
+
         let path = std::env::temp_dir().join(format!("clihatch-pub-{}.pub", std::process::id()));
         fs::write(&path, public_key).map_err(|e| ClihatchError::Io {
             message: e.to_string(),
         })?;
-        let out = Command::new("gh")
-            .args([
-                "repo",
-                "deploy-key",
-                "add",
-                &path.to_string_lossy(),
-                "-R",
-                tap,
-                "--allow-write",
-                "--title",
-                title,
-            ])
-            .output()
-            .map_err(|e| ClihatchError::Backend {
-                tool: "gh",
-                message: e.to_string(),
-            });
+        let path_str = path.to_string_lossy().into_owned();
+        let added = self.gh(&[
+            "repo",
+            "deploy-key",
+            "add",
+            &path_str,
+            "-R",
+            tap,
+            "--allow-write",
+            "--title",
+            title,
+        ]);
         let _ = fs::remove_file(&path);
-        let out = out?;
-        if out.status.success() {
-            Ok(())
+        let added = added?;
+        if added.success {
+            Ok(rotated)
         } else {
-            Err(backend("gh", &out.stderr))
+            Err(backend("gh", added.stderr))
         }
     }
 }
@@ -255,6 +375,7 @@ impl SecretOps for RealSecretOps {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    use std::collections::VecDeque;
 
     #[derive(Default)]
     struct FakeOps {
@@ -269,9 +390,9 @@ mod tests {
         fn generate_keypair(&self, _c: &str) -> Result<(String, String), ClihatchError> {
             Ok(("PRIVATE".into(), "ssh-ed25519 AAAA...".into()))
         }
-        fn add_deploy_key(&self, tap: &str, _t: &str, _k: &str) -> Result<(), ClihatchError> {
+        fn add_deploy_key(&self, tap: &str, _t: &str, _k: &str) -> Result<bool, ClihatchError> {
             self.deploy_keys.borrow_mut().push(tap.into());
-            Ok(())
+            Ok(false)
         }
     }
 
@@ -364,6 +485,176 @@ mod tests {
         assert_eq!(cargo_token_from_credentials("[other]\nkey = 1\n"), None);
     }
 
+    /// One recorded call: (program, args, stdin).
+    type Call = (String, Vec<String>, Option<String>);
+    /// A call's (args, stdin) once filtered to a single program.
+    type Invocation = (Vec<String>, Option<String>);
+
+    /// A recording runner: captures every [`Call`] and returns queued responses
+    /// (defaulting to empty success). Used to assert the exact `gh` invocations;
+    /// `ssh-keygen` is covered by the real backend test.
+    #[derive(Default)]
+    struct RecordingRunner {
+        calls: RefCell<Vec<Call>>,
+        responses: RefCell<VecDeque<CmdOutput>>,
+    }
+    impl RecordingRunner {
+        fn with(responses: Vec<CmdOutput>) -> Self {
+            Self {
+                calls: RefCell::new(Vec::new()),
+                responses: RefCell::new(responses.into()),
+            }
+        }
+        fn calls_to(&self, program: &str) -> Vec<Invocation> {
+            self.calls
+                .borrow()
+                .iter()
+                .filter(|(p, ..)| p == program)
+                .map(|(_, a, s)| (a.clone(), s.clone()))
+                .collect()
+        }
+    }
+    impl CommandRunner for RecordingRunner {
+        fn run(
+            &self,
+            program: &str,
+            args: &[&str],
+            stdin: Option<&str>,
+        ) -> std::io::Result<CmdOutput> {
+            self.calls.borrow_mut().push((
+                program.to_string(),
+                args.iter().map(|s| s.to_string()).collect(),
+                stdin.map(String::from),
+            ));
+            Ok(self
+                .responses
+                .borrow_mut()
+                .pop_front()
+                .unwrap_or(CmdOutput {
+                    success: true,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }))
+        }
+    }
+
+    fn ok(stdout: &str) -> CmdOutput {
+        CmdOutput {
+            success: true,
+            stdout: stdout.into(),
+            stderr: String::new(),
+        }
+    }
+    fn err(stderr: &str) -> CmdOutput {
+        CmdOutput {
+            success: false,
+            stdout: String::new(),
+            stderr: stderr.into(),
+        }
+    }
+
+    #[test]
+    fn set_secret_pipes_value_on_stdin_with_correct_argv() {
+        let ops = RealSecretOps::with_runner(RecordingRunner::default());
+        ops.set_secret("rvben/demo", "CARGO_REGISTRY_TOKEN", "cio_secret")
+            .unwrap();
+        let calls = ops.runner.calls_to("gh");
+        assert_eq!(
+            calls,
+            [(
+                vec![
+                    "secret".into(),
+                    "set".into(),
+                    "CARGO_REGISTRY_TOKEN".into(),
+                    "-R".into(),
+                    "rvben/demo".into()
+                ],
+                Some("cio_secret".into())
+            )]
+        );
+    }
+
+    #[test]
+    fn set_secret_surfaces_gh_failure_as_backend_error() {
+        let ops = RealSecretOps::with_runner(RecordingRunner::with(vec![err("HTTP 404")]));
+        let e = ops.set_secret("rvben/demo", "X", "v").unwrap_err();
+        assert_eq!(e.kind(), "backend");
+        assert!(e.to_string().contains("HTTP 404"));
+    }
+
+    #[test]
+    fn add_deploy_key_rotates_matching_title_then_adds() {
+        // list returns one matching + one unrelated key; delete + add succeed.
+        let runner = RecordingRunner::with(vec![
+            ok(r#"[{"id":42,"title":"demo release (CI push)"},{"id":7,"title":"other"}]"#),
+            ok(""), // delete 42
+            ok(""), // add
+        ]);
+        let ops = RealSecretOps::with_runner(runner);
+        let rotated = ops
+            .add_deploy_key(
+                "rvben/homebrew-tap",
+                "demo release (CI push)",
+                "ssh-ed25519 K",
+            )
+            .unwrap();
+        assert!(rotated, "an existing key with the title was rotated");
+        let calls = ops.runner.calls_to("gh");
+        // list, delete 42, add - the unrelated key 7 is untouched.
+        assert_eq!(calls[0].0[..3], ["repo", "deploy-key", "list"]);
+        assert_eq!(
+            calls[1].0,
+            [
+                "repo",
+                "deploy-key",
+                "delete",
+                "42",
+                "-R",
+                "rvben/homebrew-tap"
+            ]
+        );
+        assert_eq!(calls[2].0[..3], ["repo", "deploy-key", "add"]);
+        assert!(calls[2].0.contains(&"--allow-write".to_string()));
+        assert!(calls.iter().all(|(a, _)| !a.contains(&"7".to_string())));
+    }
+
+    #[test]
+    fn add_deploy_key_no_rotation_when_title_absent() {
+        let runner = RecordingRunner::with(vec![ok("[]"), ok("")]);
+        let ops = RealSecretOps::with_runner(runner);
+        let rotated = ops
+            .add_deploy_key(
+                "rvben/homebrew-tap",
+                "demo release (CI push)",
+                "ssh-ed25519 K",
+            )
+            .unwrap();
+        assert!(!rotated);
+        let calls = ops.runner.calls_to("gh");
+        assert_eq!(calls.len(), 2, "list + add only, no delete");
+    }
+
+    #[test]
+    fn preflight_fails_fast_when_not_authenticated() {
+        let runner = RecordingRunner::with(vec![err("You are not logged into any GitHub hosts")]);
+        let ops = RealSecretOps::with_runner(runner);
+        let e = ops.preflight("rvben/demo").unwrap_err();
+        assert_eq!(e.kind(), "backend");
+        assert!(e.to_string().contains("not authenticated"));
+        // It stops at auth - never reaches `repo view`.
+        assert_eq!(ops.runner.calls_to("gh").len(), 1);
+    }
+
+    #[test]
+    fn bootstrap_preflight_aborts_before_any_mutation() {
+        let runner = RecordingRunner::with(vec![err("not logged in")]);
+        let ops = RealSecretOps::with_runner(runner);
+        let e = bootstrap(&ops, "rvben/demo", &sources(Some("cio"), None), false).unwrap_err();
+        assert_eq!(e.kind(), "backend");
+        // Only the auth probe ran; no secret was set.
+        assert_eq!(ops.runner.calls_to("gh").len(), 1);
+    }
+
     /// The real backend's only network-free operation: generating the keypair.
     /// Verifies the `ssh-keygen` invocation, the `.pub` path handling, and that
     /// the temp files are cleaned up.
@@ -373,7 +664,7 @@ mod tests {
             eprintln!("skipping: ssh-keygen not available");
             return;
         }
-        let (private_key, public_key) = RealSecretOps
+        let (private_key, public_key) = RealSecretOps::new()
             .generate_keypair("clihatch test key")
             .expect("ssh-keygen succeeds");
         assert!(

@@ -46,6 +46,9 @@ pub fn render_secrets(report: &SecretReport, format: OutputFormat) -> String {
             for skip in &report.skipped {
                 out.push_str(&format!("\n  skipped {}: {}", skip.secret, skip.reason));
             }
+            for note in &report.notes {
+                out.push_str(&format!("\n  note: {note}"));
+            }
             out
         }
     }

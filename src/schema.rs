@@ -44,7 +44,7 @@ pub fn contract() -> Value {
             },
             {
                 "name": "secrets",
-                "description": "Bootstrap a repo's release secrets: generate + register the Homebrew tap deploy key, and set CARGO_REGISTRY_TOKEN / PYPI_API_TOKEN from local sources. Missing token sources are skipped, not invented.",
+                "description": "Bootstrap a repo's release secrets: generate + register the Homebrew tap deploy key (rotating any prior key with the same title), and set CARGO_REGISTRY_TOKEN / PYPI_API_TOKEN from local sources. Preflights `gh` auth and repo access; missing token sources are skipped, not invented.",
                 "mutating": true,
                 "stability": "stable",
                 "args": [
@@ -58,7 +58,8 @@ pub fn contract() -> Value {
                     {"name": "repo", "type": "string", "description": "Resolved owner/name the secrets target."},
                     {"name": "dry_run", "type": "boolean"},
                     {"name": "set", "type": "string[]", "description": "Secret names set (or, in a dry run, that would be set)."},
-                    {"name": "skipped", "type": "object[]", "description": "Secrets not set, each with `secret` and `reason`."}
+                    {"name": "skipped", "type": "object[]", "description": "Secrets not set, each with `secret` and `reason`."},
+                    {"name": "notes", "type": "string[]", "description": "Side notes worth surfacing, e.g. a rotated deploy key."}
                 ]
             },
             {

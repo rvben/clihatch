@@ -44,8 +44,11 @@ clihatch secrets my-tool --dry-run  # show what would be set, touch nothing
 - **`PYPI_API_TOKEN`** - read from `$PYPI_API_TOKEN` / `$UV_PUBLISH_TOKEN`, or
   `--pypi-token-stdin`.
 
-Missing token sources are skipped with a hint, never invented. Needs `gh`
-authenticated (`gh auth status`).
+It preflights `gh` auth and repo access, so it fails fast (before generating a
+key) if you are not logged in. Re-running is idempotent: it rotates the deploy
+key (dropping the prior key with the same title) so the key and the stored
+secret stay in sync. Missing token sources are skipped with a hint, never
+invented.
 
 ## What you get
 

@@ -179,7 +179,7 @@ fn main() -> ExitCode {
                 cargo_token: read_cargo_token(),
                 pypi_token,
             };
-            match bootstrap(&RealSecretOps, &full_repo, &sources, dry_run) {
+            match bootstrap(&RealSecretOps::new(), &full_repo, &sources, dry_run) {
                 Ok(report) => {
                     let _ = writeln!(std::io::stdout(), "{}", render_secrets(&report, format));
                     ExitCode::SUCCESS

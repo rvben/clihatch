@@ -1,5 +1,9 @@
 name: Release
 
+# Requires three repo secrets: CARGO_REGISTRY_TOKEN, PYPI_API_TOKEN, and
+# HOMEBREW_TAP_DEPLOY_KEY. Bootstrap them in one step once the repo is on GitHub:
+#     clihatch secrets {{name}}        # use --dry-run to preview
+
 on:
   push:
     tags:
