@@ -7,6 +7,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+## [0.1.4](https://github.com/rvben/clihatch/compare/v0.1.3...v0.1.4) - 2026-06-21
+
+### Added
+
+- **new**: add --github to create+push the repo, and full-lifecycle next-steps ([976eb23](https://github.com/rvben/clihatch/commit/976eb23731a627f18efd0f29b2fdd3c6dd1a87a0))
+
+### Fixed
+
+- **new**: carry --owner into next-steps and force the initial branch to main ([8a68c62](https://github.com/rvben/clihatch/commit/8a68c625e59c0436ae6ae49e51ea1b3339515846))
+
 ## [0.1.3](https://github.com/rvben/clihatch/compare/v0.1.2...v0.1.3) - 2026-06-21
 
 ### Added
