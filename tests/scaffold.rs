@@ -104,6 +104,26 @@ fn scaffolds_the_expected_tree_with_no_leftover_placeholders() {
 }
 
 #[test]
+fn git_scaffold_lands_on_main_branch() {
+    // The generated CI triggers on `main`, so the initial commit must be there
+    // regardless of the host's init.defaultBranch.
+    let base = temp_dir().join("branch");
+    let _ = fs::create_dir_all(&base);
+    let mut req = request(&base, "branchtool");
+    req.git = true;
+    let outcome = run(&req).expect("scaffold");
+    assert!(outcome.committed);
+    let crate_dir = base.join("branchtool");
+    let branch = std::process::Command::new("git")
+        .current_dir(&crate_dir)
+        .args(["branch", "--show-current"])
+        .output()
+        .expect("git");
+    assert_eq!(String::from_utf8_lossy(&branch.stdout).trim(), "main");
+    let _ = fs::remove_dir_all(&base);
+}
+
+#[test]
 fn refuses_to_overwrite_an_existing_directory() {
     let base = temp_dir().join("exists");
     let _ = fs::create_dir_all(base.join("taken"));

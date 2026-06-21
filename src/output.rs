@@ -7,16 +7,18 @@ use serde_json::json;
 
 /// The suggested next steps, covering the path to a published release. When the
 /// repo was already created (`--github`), the "create the repo" step is omitted.
+/// The configured owner is carried through, so the commands target the right
+/// repo even with a non-default `--owner`.
 pub fn next_steps(outcome: &Outcome) -> Vec<String> {
+    let slug = format!("{}/{}", outcome.owner, outcome.name);
     let mut steps = vec![format!("cd {} && make check", outcome.dir)];
     if outcome.repo.is_none() {
         steps.push(format!(
             "create the GitHub repo + push (or re-run with --github): \
-             gh repo create <owner>/{} --source . --push",
-            outcome.name
+             gh repo create {slug} --source . --push"
         ));
     }
-    steps.push(format!("clihatch secrets {}", outcome.name));
+    steps.push(format!("clihatch secrets {slug}"));
     steps.push("vership release  # tag + dual-publish".to_string());
     steps
 }
@@ -73,5 +75,42 @@ pub fn render_secrets(report: &SecretReport, format: OutputFormat) -> String {
             }
             out
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scaffold::Outcome;
+
+    fn outcome(owner: &str, repo: Option<&str>) -> Outcome {
+        Outcome {
+            name: "demo".into(),
+            owner: owner.into(),
+            dir: "./demo".into(),
+            files: vec![],
+            committed: true,
+            repo: repo.map(String::from),
+        }
+    }
+
+    #[test]
+    fn next_steps_carry_non_default_owner() {
+        let steps = next_steps(&outcome("acme", None));
+        assert!(
+            steps.iter().any(|s| s.contains("gh repo create acme/demo")),
+            "create step targets the configured owner: {steps:?}"
+        );
+        assert!(
+            steps.iter().any(|s| s == "clihatch secrets acme/demo"),
+            "secrets step targets owner/name, not the default owner: {steps:?}"
+        );
+    }
+
+    #[test]
+    fn next_steps_omit_create_when_repo_exists() {
+        let steps = next_steps(&outcome("rvben", Some("rvben/demo")));
+        assert!(!steps.iter().any(|s| s.contains("gh repo create")));
+        assert!(steps.iter().any(|s| s == "clihatch secrets rvben/demo"));
     }
 }

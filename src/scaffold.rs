@@ -76,6 +76,8 @@ fn capitalize(s: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
     pub name: String,
+    /// The GitHub owner the next-steps target (`owner/name`).
+    pub owner: String,
     pub dir: String,
     pub files: Vec<String>,
     pub committed: bool,
@@ -111,6 +113,7 @@ pub fn scaffold(into: &Path, vars: &Vars, git: bool) -> Result<Outcome, Clihatch
 
     Ok(Outcome {
         name: vars.name.clone(),
+        owner: vars.owner.clone(),
         dir: dir.display().to_string(),
         files,
         committed,
@@ -144,7 +147,9 @@ fn write_dir(
 }
 
 /// `git init` + add exactly the generated files + an initial commit. Never
-/// `git add -A`: only the files we created are staged.
+/// `git add -A`: only the files we created are staged. The branch is forced to
+/// `main` so it matches the `on: push: main` triggers in the generated CI,
+/// regardless of the user's `init.defaultBranch`.
 fn git_init(dir: &Path, name: &str, files: &[String]) -> Result<(), ClihatchError> {
     run_git(dir, &["init", "-q"])?;
     let mut args: Vec<&str> = vec!["add", "--"];
@@ -152,6 +157,7 @@ fn git_init(dir: &Path, name: &str, files: &[String]) -> Result<(), ClihatchErro
     run_git(dir, &args)?;
     let message = format!("chore: scaffold {name} with clihatch");
     run_git(dir, &["commit", "-q", "-m", &message])?;
+    run_git(dir, &["branch", "-M", "main"])?;
     Ok(())
 }
 
