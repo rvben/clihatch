@@ -9,10 +9,14 @@ mod error;
 mod output;
 mod scaffold;
 pub mod schema;
+mod secrets;
 
 pub use error::ClihatchError;
-pub use output::render;
+pub use output::{render, render_secrets};
 pub use scaffold::{Outcome, Vars, scaffold};
+pub use secrets::{
+    RealSecretOps, SecretOps, SecretReport, Skip, Sources, bootstrap, cargo_token_from_credentials,
+};
 
 use std::path::PathBuf;
 

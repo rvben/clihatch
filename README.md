@@ -26,6 +26,27 @@ cd my-tool && make check      # lint + tests pass out of the box
 Options: `--description`, `--owner` (default `rvben`), `--author` (default: git
 config), `--into <dir>`, `--no-git`.
 
+### Bootstrap release secrets
+
+Once the repo exists on GitHub, wire up the three secrets the release pipeline
+needs in one step:
+
+```sh
+clihatch secrets my-tool            # -> rvben/my-tool
+clihatch secrets my-tool --dry-run  # show what would be set, touch nothing
+```
+
+- **`HOMEBREW_TAP_DEPLOY_KEY`** - generates an ed25519 key, registers it as a
+  write deploy key on the tap (`--tap`, default `rvben/homebrew-tap`), and
+  stores the private key. This is the fiddly part, fully automated.
+- **`CARGO_REGISTRY_TOKEN`** - read from `$CARGO_REGISTRY_TOKEN` or
+  `~/.cargo/credentials.toml`.
+- **`PYPI_API_TOKEN`** - read from `$PYPI_API_TOKEN` / `$UV_PUBLISH_TOKEN`, or
+  `--pypi-token-stdin`.
+
+Missing token sources are skipped with a hint, never invented. Needs `gh`
+authenticated (`gh auth status`).
+
 ## What you get
 
 A ready-to-`cargo build`, ready-to-release crate:
@@ -52,7 +73,7 @@ templates stay valid.
 | code | meaning |
 | --- | --- |
 | `0` | success |
-| `2` | IO or git failure |
+| `2` | IO, git, or backend (`gh`/`ssh-keygen`) failure |
 | `3` | usage error, or the target directory already exists |
 
 ## For agents (clispec)
@@ -62,8 +83,9 @@ clihatch schema
 ```
 
 Structured output on stdout, structured error envelopes on stderr, a `schema`
-subcommand validated against `clispec.dev/schema/v0.2.json`. `new` is the one
-`mutating: true` command (it creates files; it never overwrites).
+subcommand validated against `clispec.dev/schema/v0.2.json`. `new` and `secrets`
+are the `mutating: true` commands; `new` never overwrites, and `secrets`
+supports `--dry-run`.
 
 ## License
 

@@ -23,14 +23,21 @@ fn schema_conforms_to_clispec_v0_2() {
 }
 
 #[test]
-fn schema_marks_only_new_as_mutating() {
+fn schema_marks_mutating_commands_correctly() {
     let v = clihatch::schema::contract();
     assert_eq!(v["name"], "clihatch");
     let commands = v["commands"].as_array().unwrap();
-    let new = commands.iter().find(|c| c["name"] == "new").unwrap();
-    assert_eq!(new["mutating"], true);
+    let mutating = |name: &str| {
+        commands
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap_or_else(|| panic!("command {name} present"))["mutating"]
+            .clone()
+    };
+    for name in ["new", "secrets"] {
+        assert_eq!(mutating(name), true, "{name} writes and must be mutating");
+    }
     for name in ["schema", "completions"] {
-        let c = commands.iter().find(|c| c["name"] == name).unwrap();
-        assert_eq!(c["mutating"], false, "{name} must be read-only");
+        assert_eq!(mutating(name), false, "{name} must be read-only");
     }
 }

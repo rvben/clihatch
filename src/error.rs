@@ -27,6 +27,10 @@ pub enum ClihatchError {
     /// A git operation failed.
     #[error("git: {message}")]
     Git { message: String },
+
+    /// An external tool (gh, ssh-keygen) failed.
+    #[error("{tool}: {message}")]
+    Backend { tool: &'static str, message: String },
 }
 
 impl ClihatchError {
@@ -37,6 +41,7 @@ impl ClihatchError {
             ClihatchError::Exists { .. } => "exists",
             ClihatchError::Io { .. } => "io",
             ClihatchError::Git { .. } => "git",
+            ClihatchError::Backend { .. } => "backend",
         }
     }
 
@@ -47,6 +52,9 @@ impl ClihatchError {
             ClihatchError::Exists { .. } => {
                 Some("choose another name, or remove the existing directory")
             }
+            ClihatchError::Backend { .. } => {
+                Some("ensure `gh` is installed and authenticated (`gh auth status`)")
+            }
             _ => None,
         }
     }
@@ -54,7 +62,9 @@ impl ClihatchError {
     /// The process exit code associated with this error.
     pub fn exit_code(&self) -> i32 {
         match self {
-            ClihatchError::Io { .. } | ClihatchError::Git { .. } => 2,
+            ClihatchError::Io { .. }
+            | ClihatchError::Git { .. }
+            | ClihatchError::Backend { .. } => 2,
             ClihatchError::Usage { .. } | ClihatchError::Exists { .. } => 3,
         }
     }

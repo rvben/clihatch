@@ -43,6 +43,25 @@ pub fn contract() -> Value {
                 ]
             },
             {
+                "name": "secrets",
+                "description": "Bootstrap a repo's release secrets: generate + register the Homebrew tap deploy key, and set CARGO_REGISTRY_TOKEN / PYPI_API_TOKEN from local sources. Missing token sources are skipped, not invented.",
+                "mutating": true,
+                "stability": "stable",
+                "args": [
+                    {"name": "repo", "type": "string", "required": true, "description": "Target repo as owner/name, or a bare name (combined with --owner)."},
+                    {"name": "--owner", "type": "string", "required": false, "default": "rvben", "description": "GitHub owner, used when repo is a bare name."},
+                    {"name": "--tap", "type": "string", "required": false, "default": "rvben/homebrew-tap", "description": "Homebrew tap repo to register the deploy key on."},
+                    {"name": "--pypi-token-stdin", "type": "boolean", "required": false, "default": false, "description": "Read the PyPI token from stdin instead of $PYPI_API_TOKEN."},
+                    {"name": "--dry-run", "type": "boolean", "required": false, "default": false, "description": "Report what would be set without executing anything."}
+                ],
+                "output_fields": [
+                    {"name": "repo", "type": "string", "description": "Resolved owner/name the secrets target."},
+                    {"name": "dry_run", "type": "boolean"},
+                    {"name": "set", "type": "string[]", "description": "Secret names set (or, in a dry run, that would be set)."},
+                    {"name": "skipped", "type": "object[]", "description": "Secrets not set, each with `secret` and `reason`."}
+                ]
+            },
+            {
                 "name": "schema",
                 "description": "Print this clispec contract as JSON.",
                 "mutating": false,
@@ -62,7 +81,8 @@ pub fn contract() -> Value {
             {"kind": "usage", "exit_code": 3, "retryable": false, "description": "Invalid command-line arguments or crate name."},
             {"kind": "exists", "exit_code": 3, "retryable": false, "description": "The target directory already exists."},
             {"kind": "io", "exit_code": 2, "retryable": false, "description": "A filesystem operation failed."},
-            {"kind": "git", "exit_code": 2, "retryable": false, "description": "A git operation failed (the files were still written)."}
+            {"kind": "git", "exit_code": 2, "retryable": false, "description": "A git operation failed (the files were still written)."},
+            {"kind": "backend", "exit_code": 2, "retryable": false, "description": "An external tool (gh, ssh-keygen) failed; check `gh auth status`."}
         ]
     })
 }

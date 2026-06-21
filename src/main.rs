@@ -4,14 +4,17 @@
 //! structured error envelopes on the last line of stderr, a `schema`
 //! subcommand. `new` is the one `mutating: true` command.
 
-use std::io::{IsTerminal, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command as PCommand, ExitCode};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::error::ErrorKind as ClapErrorKind;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
-use clihatch::{ClihatchError, OutputFormat, Request, render, run, schema};
+use clihatch::{
+    ClihatchError, OutputFormat, RealSecretOps, Request, Sources, bootstrap,
+    cargo_token_from_credentials, render, render_secrets, run, schema,
+};
 use serde_json::json;
 
 #[derive(Parser)]
@@ -55,6 +58,23 @@ enum Command {
         /// Skip git init + initial commit.
         #[arg(long)]
         no_git: bool,
+    },
+    /// Bootstrap a repo's release secrets (Homebrew deploy key, cargo + PyPI tokens).
+    Secrets {
+        /// Target repo as owner/name, or a bare name (combined with --owner).
+        repo: String,
+        /// GitHub owner, used when repo is a bare name.
+        #[arg(long, default_value = "rvben")]
+        owner: String,
+        /// Homebrew tap repo to register the deploy key on.
+        #[arg(long, default_value = "rvben/homebrew-tap")]
+        tap: String,
+        /// Read the PyPI token from stdin instead of $PYPI_API_TOKEN.
+        #[arg(long)]
+        pypi_token_stdin: bool,
+        /// Report what would be set without executing anything.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Print the machine-readable contract (clispec.dev) as JSON.
     Schema,
@@ -132,6 +152,41 @@ fn main() -> ExitCode {
                 Err(err) => fail(&err),
             }
         }
+        Some(Command::Secrets {
+            repo,
+            owner,
+            tap,
+            pypi_token_stdin,
+            dry_run,
+        }) => {
+            let full_repo = if repo.contains('/') {
+                repo.clone()
+            } else {
+                format!("{owner}/{repo}")
+            };
+            let crate_name = full_repo
+                .rsplit('/')
+                .next()
+                .unwrap_or(&full_repo)
+                .to_string();
+            let pypi_token = match read_pypi_token(pypi_token_stdin) {
+                Ok(token) => token,
+                Err(err) => return fail(&err),
+            };
+            let sources = Sources {
+                crate_name,
+                tap,
+                cargo_token: read_cargo_token(),
+                pypi_token,
+            };
+            match bootstrap(&RealSecretOps, &full_repo, &sources, dry_run) {
+                Ok(report) => {
+                    let _ = writeln!(std::io::stdout(), "{}", render_secrets(&report, format));
+                    ExitCode::SUCCESS
+                }
+                Err(err) => fail(&err),
+            }
+        }
         None => {
             let err = ClihatchError::Usage {
                 message: "no command given (try `clihatch new <name>`)".into(),
@@ -139,6 +194,48 @@ fn main() -> ExitCode {
             fail(&err)
         }
     }
+}
+
+/// Read the crates.io token from `$CARGO_REGISTRY_TOKEN`, else from the Cargo
+/// credentials file under `$CARGO_HOME` (or `~/.cargo`).
+fn read_cargo_token() -> Option<String> {
+    if let Ok(token) = std::env::var("CARGO_REGISTRY_TOKEN") {
+        let token = token.trim();
+        if !token.is_empty() {
+            return Some(token.to_string());
+        }
+    }
+    let cargo_home = std::env::var("CARGO_HOME")
+        .unwrap_or_else(|_| format!("{}/.cargo", std::env::var("HOME").unwrap_or_default()));
+    let dir = PathBuf::from(cargo_home);
+    let contents = std::fs::read_to_string(dir.join("credentials.toml"))
+        .or_else(|_| std::fs::read_to_string(dir.join("credentials")))
+        .ok()?;
+    cargo_token_from_credentials(&contents)
+}
+
+/// Resolve the PyPI token: stdin when requested, else `$PYPI_API_TOKEN` /
+/// `$UV_PUBLISH_TOKEN`. Absent is fine - the secret is skipped, not invented.
+fn read_pypi_token(from_stdin: bool) -> Result<Option<String>, ClihatchError> {
+    if from_stdin {
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(|e| ClihatchError::Io {
+                message: e.to_string(),
+            })?;
+        let buf = buf.trim().to_string();
+        return Ok((!buf.is_empty()).then_some(buf));
+    }
+    for key in ["PYPI_API_TOKEN", "UV_PUBLISH_TOKEN"] {
+        if let Ok(token) = std::env::var(key) {
+            let token = token.trim();
+            if !token.is_empty() {
+                return Ok(Some(token.to_string()));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Author string from `git config`, falling back to a placeholder.
