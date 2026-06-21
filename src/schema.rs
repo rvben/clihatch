@@ -51,7 +51,7 @@ pub fn contract() -> Value {
                     {"name": "repo", "type": "string", "required": true, "description": "Target repo as owner/name, or a bare name (combined with --owner)."},
                     {"name": "--owner", "type": "string", "required": false, "default": "rvben", "description": "GitHub owner, used when repo is a bare name."},
                     {"name": "--tap", "type": "string", "required": false, "default": "rvben/homebrew-tap", "description": "Homebrew tap repo to register the deploy key on."},
-                    {"name": "--pypi-token-stdin", "type": "boolean", "required": false, "default": false, "description": "Read the PyPI token from stdin instead of $PYPI_API_TOKEN."},
+                    {"name": "--pypi-token-stdin", "type": "boolean", "required": false, "default": false, "description": "Read the PyPI token from stdin (otherwise $PYPI_API_TOKEN/$UV_PUBLISH_TOKEN, then the [pypi] token in ~/.pypirc)."},
                     {"name": "--dry-run", "type": "boolean", "required": false, "default": false, "description": "Report what would be set without executing anything."}
                 ],
                 "output_fields": [

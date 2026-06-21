@@ -41,8 +41,8 @@ clihatch secrets my-tool --dry-run  # show what would be set, touch nothing
   stores the private key. This is the fiddly part, fully automated.
 - **`CARGO_REGISTRY_TOKEN`** - read from `$CARGO_REGISTRY_TOKEN` or
   `~/.cargo/credentials.toml`.
-- **`PYPI_API_TOKEN`** - read from `$PYPI_API_TOKEN` / `$UV_PUBLISH_TOKEN`, or
-  `--pypi-token-stdin`.
+- **`PYPI_API_TOKEN`** - read from `$PYPI_API_TOKEN` / `$UV_PUBLISH_TOKEN`, the
+  `[pypi]` token in `~/.pypirc`, or `--pypi-token-stdin`.
 
 It preflights `gh` auth and repo access, so it fails fast (before generating a
 key) if you are not logged in. Re-running is idempotent: it rotates the deploy

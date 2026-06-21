@@ -13,7 +13,7 @@ use clap::error::ErrorKind as ClapErrorKind;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clihatch::{
     ClihatchError, OutputFormat, RealSecretOps, Request, Sources, bootstrap,
-    cargo_token_from_credentials, render, render_secrets, run, schema,
+    cargo_token_from_credentials, pypi_token_from_pypirc, render, render_secrets, run, schema,
 };
 use serde_json::json;
 
@@ -233,6 +233,15 @@ fn read_pypi_token(from_stdin: bool) -> Result<Option<String>, ClihatchError> {
             if !token.is_empty() {
                 return Ok(Some(token.to_string()));
             }
+        }
+    }
+    // Fall back to the standard PyPI credentials file, ~/.pypirc.
+    if let Some(home) = std::env::var_os("HOME") {
+        let path = PathBuf::from(home).join(".pypirc");
+        if let Ok(contents) = std::fs::read_to_string(path)
+            && let Some(token) = pypi_token_from_pypirc(&contents)
+        {
+            return Ok(Some(token));
         }
     }
     Ok(None)

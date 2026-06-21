@@ -16,6 +16,7 @@ pub use output::{render, render_secrets};
 pub use scaffold::{Outcome, Vars, scaffold};
 pub use secrets::{
     RealSecretOps, SecretOps, SecretReport, Skip, Sources, bootstrap, cargo_token_from_credentials,
+    pypi_token_from_pypirc,
 };
 
 use std::path::PathBuf;

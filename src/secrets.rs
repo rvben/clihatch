@@ -116,7 +116,7 @@ pub fn bootstrap(
         }
         None => skipped.push(Skip {
             secret: "PYPI_API_TOKEN".into(),
-            reason: "set $PYPI_API_TOKEN, or pass --pypi-token-stdin".into(),
+            reason: "no token in $PYPI_API_TOKEN or ~/.pypirc (or pass --pypi-token-stdin)".into(),
         }),
     }
 
@@ -157,6 +157,32 @@ pub fn cargo_token_from_credentials(toml: &str) -> Option<String> {
         fallback.get_or_insert(value);
     }
     fallback
+}
+
+/// Extract the PyPI upload token from a `.pypirc`: the `password` under the
+/// `[pypi]` section (the conventional `__token__` password). The `[testpypi]`
+/// and `[distutils]` sections are ignored.
+pub fn pypi_token_from_pypirc(pypirc: &str) -> Option<String> {
+    let mut in_pypi = false;
+    for raw in pypirc.lines() {
+        let line = raw.trim();
+        if let Some(inner) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            in_pypi = inner.trim() == "pypi";
+            continue;
+        }
+        if !in_pypi {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("password")
+            && let Some(value) = rest.trim_start().strip_prefix('=')
+        {
+            let value = value.trim().to_string();
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 /// The result of running an external command.
@@ -483,6 +509,24 @@ mod tests {
     #[test]
     fn no_cargo_token_when_absent() {
         assert_eq!(cargo_token_from_credentials("[other]\nkey = 1\n"), None);
+    }
+
+    #[test]
+    fn reads_pypi_token_from_pypi_section() {
+        let rc = "[pypi]\nusername = __token__\npassword = pypi-AgEN123\n";
+        assert_eq!(pypi_token_from_pypirc(rc), Some("pypi-AgEN123".into()));
+    }
+
+    #[test]
+    fn ignores_testpypi_section() {
+        let rc = "[testpypi]\nusername = __token__\npassword = pypi-TEST\n";
+        assert_eq!(pypi_token_from_pypirc(rc), None);
+    }
+
+    #[test]
+    fn prefers_pypi_over_other_sections() {
+        let rc = "[distutils]\nindex-servers = pypi\n\n[testpypi]\npassword = pypi-WRONG\n\n[pypi]\nusername = __token__\npassword = pypi-RIGHT\n";
+        assert_eq!(pypi_token_from_pypirc(rc), Some("pypi-RIGHT".into()));
     }
 
     /// One recorded call: (program, args, stdin).
