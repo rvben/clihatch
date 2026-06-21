@@ -105,7 +105,7 @@ pub fn scaffold(into: &Path, vars: &Vars, git: bool) -> Result<Outcome, Clihatch
     let _ = Command::new("cargo").current_dir(&dir).arg("fmt").output();
 
     let committed = if git {
-        git_init(&dir, &vars.name, &files)?;
+        git_init(&dir, &vars.name, &vars.author, &files)?;
         true
     } else {
         false
@@ -150,15 +150,50 @@ fn write_dir(
 /// `git add -A`: only the files we created are staged. The branch is forced to
 /// `main` so it matches the `on: push: main` triggers in the generated CI,
 /// regardless of the user's `init.defaultBranch`.
-fn git_init(dir: &Path, name: &str, files: &[String]) -> Result<(), ClihatchError> {
+///
+/// The commit identity is set explicitly from `author`, so scaffolding succeeds
+/// even where `git config user.name/user.email` is unset (e.g. fresh CI).
+fn git_init(dir: &Path, name: &str, author: &str, files: &[String]) -> Result<(), ClihatchError> {
     run_git(dir, &["init", "-q"])?;
     let mut args: Vec<&str> = vec!["add", "--"];
     args.extend(files.iter().map(String::as_str));
     run_git(dir, &args)?;
+
+    let (commit_name, commit_email) = author_identity(author);
     let message = format!("chore: scaffold {name} with clihatch");
-    run_git(dir, &["commit", "-q", "-m", &message])?;
+    run_git(
+        dir,
+        &[
+            "-c",
+            &format!("user.name={commit_name}"),
+            "-c",
+            &format!("user.email={commit_email}"),
+            "commit",
+            "-q",
+            "-m",
+            &message,
+        ],
+    )?;
     run_git(dir, &["branch", "-M", "main"])?;
     Ok(())
+}
+
+/// Split an `author` string of the form `Name <email>` into `(name, email)`,
+/// falling back to safe placeholders so the commit always has an identity.
+fn author_identity(author: &str) -> (String, String) {
+    let (name, email) = match (author.find('<'), author.rfind('>')) {
+        (Some(open), Some(close)) if close > open => {
+            (author[..open].trim(), author[open + 1..close].trim())
+        }
+        _ => (author.trim(), ""),
+    };
+    let name = if name.is_empty() { "clihatch" } else { name };
+    let email = if email.is_empty() {
+        "clihatch@users.noreply.github.com"
+    } else {
+        email
+    };
+    (name.to_string(), email.to_string())
 }
 
 fn run_git(dir: &Path, args: &[&str]) -> Result<(), ClihatchError> {
@@ -185,7 +220,29 @@ fn io(e: std::io::Error) -> ClihatchError {
 
 #[cfg(test)]
 mod tests {
-    use super::Vars;
+    use super::{Vars, author_identity};
+
+    #[test]
+    fn splits_author_into_name_and_email() {
+        assert_eq!(
+            author_identity("Ruben Jongejan <ruben@example.com>"),
+            (
+                "Ruben Jongejan".to_string(),
+                "ruben@example.com".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn author_identity_falls_back_when_malformed() {
+        // No angle brackets -> the whole string is the name, placeholder email.
+        let (name, email) = author_identity("Just A Name");
+        assert_eq!(name, "Just A Name");
+        assert!(email.contains('@'));
+        // Empty -> safe placeholders, never empty (git rejects empty idents).
+        let (name, email) = author_identity("");
+        assert!(!name.is_empty() && email.contains('@'));
+    }
 
     fn vars(name: &str) -> Vars {
         Vars::new(name, "desc", "rvben", "A <a@b.c>", "2026")
