@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+
+## [0.1.1](https://github.com/rvben/clihatch/compare/v0.1.0...v0.1.1) - 2026-06-21
+
+### Added
+
+- add secrets subcommand to bootstrap release secrets ([f62d3bd](https://github.com/rvben/clihatch/commit/f62d3bd23a1648282621c791d145b68b7cb70bd1))
+
 ## [0.1.0] - 2026-06-20
 
 ### Added
