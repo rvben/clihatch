@@ -53,7 +53,7 @@ pub fn contract() -> Value {
                 "args": [
                     {"name": "repo", "type": "string", "required": true, "description": "Target repo as owner/name, or a bare name (combined with --owner)."},
                     {"name": "--owner", "type": "string", "required": false, "default": "rvben", "description": "GitHub owner, used when repo is a bare name."},
-                    {"name": "--tap", "type": "string", "required": false, "default": "rvben/homebrew-tap", "description": "Homebrew tap repo to register the deploy key on."},
+                    {"name": "--tap", "type": "string", "required": false, "description": "Homebrew tap repo to register the deploy key on (default: <owner>/homebrew-tap, matching the generated release workflow)."},
                     {"name": "--pypi-token-stdin", "type": "boolean", "required": false, "default": false, "description": "Read the PyPI token from stdin (otherwise $PYPI_API_TOKEN/$UV_PUBLISH_TOKEN, then the [pypi] token in ~/.pypirc)."},
                     {"name": "--dry-run", "type": "boolean", "required": false, "default": false, "description": "Report what would be set without executing anything."},
                     {"name": "--verify", "type": "boolean", "required": false, "default": false, "description": "Read-only: report which release secrets are already set on the repo (no changes). Outputs present/missing instead of set/skipped."}

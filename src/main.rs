@@ -73,9 +73,9 @@ enum Command {
         /// GitHub owner, used when repo is a bare name.
         #[arg(long, default_value = "rvben")]
         owner: String,
-        /// Homebrew tap repo to register the deploy key on.
-        #[arg(long, default_value = "rvben/homebrew-tap")]
-        tap: String,
+        /// Homebrew tap repo to register the deploy key on (default: <owner>/homebrew-tap).
+        #[arg(long)]
+        tap: Option<String>,
         /// Read the PyPI token from stdin instead of $PYPI_API_TOKEN.
         #[arg(long)]
         pypi_token_stdin: bool,
@@ -193,6 +193,9 @@ fn main() -> ExitCode {
                 .next()
                 .unwrap_or(&full_repo)
                 .to_string();
+            // Default the tap to the repo owner's tap, matching what the
+            // generated release workflow clones (`<owner>/homebrew-tap`).
+            let tap = tap.unwrap_or_else(|| clihatch::default_tap(&full_repo));
             let pypi_token = match read_pypi_token(pypi_token_stdin) {
                 Ok(token) => token,
                 Err(err) => return fail(&err),

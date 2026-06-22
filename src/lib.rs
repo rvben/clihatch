@@ -77,6 +77,14 @@ pub fn run(req: &Request) -> Result<Outcome, ClihatchError> {
     Ok(outcome)
 }
 
+/// The conventional Homebrew tap for a repo's owner: `<owner>/homebrew-tap`.
+/// Keeps `clihatch secrets`' default consistent with the tap the generated
+/// release workflow clones (`<owner>/homebrew-tap`).
+pub fn default_tap(repo: &str) -> String {
+    let owner = repo.split('/').next().unwrap_or(repo);
+    format!("{owner}/homebrew-tap")
+}
+
 /// Crate-name rules: `[a-z][a-z0-9_-]*`, matching what crates.io accepts.
 fn validate_name(name: &str) -> Result<(), ClihatchError> {
     let ok = name.len() <= 64
@@ -117,6 +125,12 @@ mod tests {
         assert_eq!(err.kind(), "usage");
         // Fails fast, before touching the filesystem.
         assert!(!PathBuf::from("/tmp/does-not-matter/demo").exists());
+    }
+
+    #[test]
+    fn default_tap_follows_repo_owner() {
+        assert_eq!(super::default_tap("rvben/dotdiff"), "rvben/homebrew-tap");
+        assert_eq!(super::default_tap("acme/tool"), "acme/homebrew-tap");
     }
 
     #[test]
