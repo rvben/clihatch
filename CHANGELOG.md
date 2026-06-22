@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+## [0.1.5](https://github.com/rvben/clihatch/compare/v0.1.4...v0.1.5) - 2026-06-22
+
+### Added
+
+- isolate release-pipeline jobs, add --no-pypi and secrets --verify ([5619b92](https://github.com/rvben/clihatch/commit/5619b923ea80ad65948b7ebaf85e2c2e7feee8d5))
+
+### Fixed
+
+- **secrets**: default --tap to <owner>/homebrew-tap for owner consistency ([2052238](https://github.com/rvben/clihatch/commit/2052238a7a1fc854ee11cdfaa5eee94e57f2f631))
+
 ## [0.1.4](https://github.com/rvben/clihatch/compare/v0.1.3...v0.1.4) - 2026-06-21
 
 ### Added
