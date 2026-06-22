@@ -20,6 +20,7 @@ fn generated_crate_compiles() {
         into: base.clone(),
         git: false,
         github: false,
+        pypi: true,
     };
     run(&req).expect("scaffold");
     let crate_dir = base.join("buildcheck");

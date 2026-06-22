@@ -14,11 +14,11 @@ pub mod schema;
 mod secrets;
 
 pub use error::ClihatchError;
-pub use output::{next_steps, render, render_secrets};
+pub use output::{next_steps, render, render_secrets, render_verify};
 pub use scaffold::{Outcome, Vars, scaffold};
 pub use secrets::{
-    RealSecretOps, SecretOps, SecretReport, Skip, Sources, bootstrap, cargo_token_from_credentials,
-    pypi_token_from_pypirc,
+    RealSecretOps, SecretOps, SecretReport, Skip, Sources, VerifyReport, bootstrap,
+    cargo_token_from_credentials, pypi_token_from_pypirc, verify,
 };
 
 use std::path::PathBuf;
@@ -43,6 +43,8 @@ pub struct Request {
     pub git: bool,
     /// Create the GitHub repo (`owner/name`) and push the initial commit.
     pub github: bool,
+    /// Include the PyPI/maturin dual-publish machinery.
+    pub pypi: bool,
 }
 
 /// Scaffold a new crate from the request, optionally creating its GitHub repo.
@@ -59,6 +61,7 @@ pub fn run(req: &Request) -> Result<Outcome, ClihatchError> {
         &req.owner,
         &req.author,
         &req.year,
+        req.pypi,
     );
     let mut outcome = scaffold(&req.into, &vars, req.git)?;
     if req.github {
@@ -108,6 +111,7 @@ mod tests {
             into: PathBuf::from("/tmp/does-not-matter"),
             git: false,
             github: true,
+            pypi: true,
         };
         let err = run(&req).expect_err("--github with --no-git must fail");
         assert_eq!(err.kind(), "usage");

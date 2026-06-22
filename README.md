@@ -24,7 +24,11 @@ cd my-tool && make check      # lint + tests pass out of the box
 ```
 
 Options: `--description`, `--owner` (default `rvben`), `--author` (default: git
-config), `--into <dir>`, `--no-git`, `--github`.
+config), `--into <dir>`, `--no-git`, `--github`, `--no-pypi`.
+
+Use `--no-pypi` for a Rust-only tool: it omits the PyPI/maturin machinery, so
+the crate publishes to crates.io + Homebrew only (and never trips PyPI's
+new-project rate limit).
 
 The whole path from nothing to a published release is four steps, and `clihatch`
 does three of them:
@@ -49,6 +53,7 @@ needs in one step:
 ```sh
 clihatch secrets my-tool            # -> rvben/my-tool
 clihatch secrets my-tool --dry-run  # show what would be set, touch nothing
+clihatch secrets my-tool --verify   # read-only: which secrets are already set
 ```
 
 - **`HOMEBREW_TAP_DEPLOY_KEY`** - generates an ed25519 key, registers it as a
@@ -75,10 +80,12 @@ A ready-to-`cargo build`, ready-to-release crate:
 - **`schemas/clispec-v0.2.json` + `tests/conformance.rs`** - your `schema`
   output is validated against the spec by the test suite.
 - **`tests/cli.rs`** - end-to-end tests of the binary.
-- **The dual-publish pipeline** - `.github/workflows/{ci,release}.yml`
-  (GitHub-hosted, building macOS + Linux for crates.io + PyPI + Homebrew),
-  `pyproject.toml` (maturin), `Makefile`, `prek.toml`, `README.md`, `LICENSE`,
-  `.gitignore`.
+- **The release pipeline** - `.github/workflows/{ci,release}.yml` (GitHub-hosted,
+  building macOS + Linux). Each target publishes in its own job, so one target's
+  failure (e.g. a registry rate limit) doesn't block the rest - re-run just the
+  failed one with `gh run rerun --failed`. Includes `pyproject.toml` (maturin)
+  for the PyPI wheel unless `--no-pypi`, plus `Makefile`, `prek.toml`,
+  `README.md`, `LICENSE`, `.gitignore`.
 - A `git init` + initial commit (skip with `--no-git`). Generated sources are
   `cargo fmt`-clean.
 

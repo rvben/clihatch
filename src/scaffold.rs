@@ -22,6 +22,8 @@ pub struct Vars {
     pub owner: String,
     pub author: String,
     pub year: String,
+    /// Include the PyPI/maturin dual-publish machinery.
+    pub pypi: bool,
 }
 
 impl Vars {
@@ -31,6 +33,7 @@ impl Vars {
         owner: impl Into<String>,
         author: impl Into<String>,
         year: impl Into<String>,
+        pypi: bool,
     ) -> Self {
         let name = name.into();
         let name_snake = name.replace('-', "_");
@@ -47,13 +50,17 @@ impl Vars {
             owner: owner.into(),
             author: author.into(),
             year: year.into(),
+            pypi,
         }
     }
 
-    /// Replace every `{{placeholder}}` in `s`. The longer tokens
-    /// (`{{name_snake}}`, `{{name_pascal}}`) are distinct strings from
-    /// `{{name}}`, so replacement order does not matter.
+    /// Render a template: first strip `{{#pypi}}...{{/pypi}}` conditional blocks
+    /// (kept when `pypi`, removed otherwise), then replace every
+    /// `{{placeholder}}`. The longer tokens (`{{name_snake}}`,
+    /// `{{name_pascal}}`) are distinct strings from `{{name}}`, so replacement
+    /// order does not matter.
     pub fn apply(&self, s: &str) -> String {
+        let s = strip_conditionals(s, self.pypi);
         s.replace("{{name_snake}}", &self.name_snake)
             .replace("{{name_pascal}}", &self.name_pascal)
             .replace("{{name}}", &self.name)
@@ -62,6 +69,28 @@ impl Vars {
             .replace("{{author}}", &self.author)
             .replace("{{year}}", &self.year)
     }
+}
+
+/// Files written only when PyPI publishing is enabled.
+fn is_pypi_only_file(rel: &str) -> bool {
+    rel == "pyproject.toml"
+}
+
+/// Process whole-line `{{#pypi}}` / `{{/pypi}}` markers. Marker lines are always
+/// removed; the lines between them are kept only when `pypi` is true. Markers
+/// are matched after trimming, so indentation does not matter. Not nested.
+fn strip_conditionals(s: &str, pypi: bool) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_block = false;
+    for line in s.split_inclusive('\n') {
+        match line.trim() {
+            "{{#pypi}}" => in_block = true,
+            "{{/pypi}}" => in_block = false,
+            _ if !in_block || pypi => out.push_str(line),
+            _ => {}
+        }
+    }
+    out
 }
 
 fn capitalize(s: &str) -> String {
@@ -130,6 +159,9 @@ fn write_dir(
     for file in dir.files() {
         let rel = file.path().to_string_lossy();
         let out_rel = rel.strip_suffix(".tmpl").unwrap_or(&rel).to_string();
+        if !vars.pypi && is_pypi_only_file(&out_rel) {
+            continue;
+        }
         let target = dest_root.join(&out_rel);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(io)?;
@@ -220,7 +252,27 @@ fn io(e: std::io::Error) -> ClihatchError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Vars, author_identity};
+    use super::{Vars, author_identity, strip_conditionals};
+
+    #[test]
+    fn pypi_block_kept_when_enabled_removed_when_not() {
+        let tmpl = "keep a\n{{#pypi}}\npypi only\n{{/pypi}}\nkeep b\n";
+        assert_eq!(
+            strip_conditionals(tmpl, true),
+            "keep a\npypi only\nkeep b\n"
+        );
+        assert_eq!(strip_conditionals(tmpl, false), "keep a\nkeep b\n");
+    }
+
+    #[test]
+    fn indented_markers_are_matched_and_removed() {
+        let tmpl = "x:\n  - a\n  {{#pypi}}\n  - b\n  {{/pypi}}\n  - c\n";
+        // Markers gone in both modes; the pypi line only survives when enabled.
+        assert_eq!(strip_conditionals(tmpl, true), "x:\n  - a\n  - b\n  - c\n");
+        assert_eq!(strip_conditionals(tmpl, false), "x:\n  - a\n  - c\n");
+        assert!(!strip_conditionals(tmpl, true).contains("{{#"));
+        assert!(!strip_conditionals(tmpl, false).contains("{{/"));
+    }
 
     #[test]
     fn splits_author_into_name_and_email() {
@@ -245,7 +297,7 @@ mod tests {
     }
 
     fn vars(name: &str) -> Vars {
-        Vars::new(name, "desc", "rvben", "A <a@b.c>", "2026")
+        Vars::new(name, "desc", "rvben", "A <a@b.c>", "2026", true)
     }
 
     #[test]

@@ -22,6 +22,7 @@ fn request(into: &Path, name: &str) -> Request {
         into: into.to_path_buf(),
         git: false,
         github: false,
+        pypi: true,
     }
 }
 
@@ -84,6 +85,10 @@ fn scaffolds_the_expected_tree_with_no_leftover_placeholders() {
         "{{owner}}",
         "{{author}}",
         "{{year}}",
+        // Conditional-block markers must never survive rendering.
+        "{{#",
+        "{{/",
+        "{{^",
     ];
     let mut files = Vec::new();
     walk_files(&crate_dir, &mut files);
@@ -100,6 +105,38 @@ fn scaffolds_the_expected_tree_with_no_leftover_placeholders() {
 
     assert!(outcome.files.len() >= 16);
     assert!(!outcome.committed);
+    let _ = fs::remove_dir_all(&base);
+}
+
+#[test]
+fn no_pypi_omits_pyproject_and_pypi_workflow_jobs() {
+    let base = temp_dir().join("nopypi");
+    let _ = fs::create_dir_all(&base);
+    let mut req = request(&base, "rusttool");
+    req.pypi = false;
+    let outcome = run(&req).expect("scaffold");
+    let crate_dir = base.join("rusttool");
+
+    // pyproject.toml is omitted entirely.
+    assert!(
+        !crate_dir.join("pyproject.toml").exists(),
+        "pyproject.toml must be omitted with --no-pypi"
+    );
+    assert!(!outcome.files.iter().any(|f| f == "pyproject.toml"));
+
+    // The release workflow keeps crates.io + Homebrew but drops all PyPI/maturin
+    // machinery, and leaves no unrendered conditional markers.
+    let release = fs::read_to_string(crate_dir.join(".github/workflows/release.yml")).unwrap();
+    let lower = release.to_lowercase();
+    for needle in ["pypi", "maturin", "wheel", "sdist"] {
+        assert!(
+            !lower.contains(needle),
+            "release.yml should not mention {needle:?} with --no-pypi"
+        );
+    }
+    assert!(!release.contains("{{#") && !release.contains("{{/"));
+    assert!(release.contains("publish-crates"));
+    assert!(release.contains("update-homebrew"));
     let _ = fs::remove_dir_all(&base);
 }
 

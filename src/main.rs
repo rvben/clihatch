@@ -13,7 +13,8 @@ use clap::error::ErrorKind as ClapErrorKind;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clihatch::{
     ClihatchError, OutputFormat, RealSecretOps, Request, Sources, bootstrap,
-    cargo_token_from_credentials, pypi_token_from_pypirc, render, render_secrets, run, schema,
+    cargo_token_from_credentials, pypi_token_from_pypirc, render, render_secrets, render_verify,
+    run, schema,
 };
 use serde_json::json;
 
@@ -61,6 +62,9 @@ enum Command {
         /// Also create the GitHub repo (owner/name) and push the initial commit.
         #[arg(long)]
         github: bool,
+        /// Omit the PyPI/maturin pipeline; publish to crates.io + Homebrew only.
+        #[arg(long)]
+        no_pypi: bool,
     },
     /// Bootstrap a repo's release secrets (Homebrew deploy key, cargo + PyPI tokens).
     Secrets {
@@ -78,6 +82,9 @@ enum Command {
         /// Report what would be set without executing anything.
         #[arg(long)]
         dry_run: bool,
+        /// Read-only: report which release secrets are already set on the repo.
+        #[arg(long, conflicts_with_all = ["dry_run", "pypi_token_stdin"])]
+        verify: bool,
     },
     /// Print the machine-readable contract (clispec.dev) as JSON.
     Schema,
@@ -137,6 +144,7 @@ fn main() -> ExitCode {
             into,
             no_git,
             github,
+            no_pypi,
         }) => {
             let request = Request {
                 description: description
@@ -148,6 +156,7 @@ fn main() -> ExitCode {
                 into,
                 git: !no_git,
                 github,
+                pypi: !no_pypi,
             };
             match run(&request) {
                 Ok(outcome) => {
@@ -163,12 +172,22 @@ fn main() -> ExitCode {
             tap,
             pypi_token_stdin,
             dry_run,
+            verify,
         }) => {
             let full_repo = if repo.contains('/') {
                 repo.clone()
             } else {
                 format!("{owner}/{repo}")
             };
+            if verify {
+                return match clihatch::verify(&RealSecretOps::new(), &full_repo) {
+                    Ok(report) => {
+                        let _ = writeln!(std::io::stdout(), "{}", render_verify(&report, format));
+                        ExitCode::SUCCESS
+                    }
+                    Err(err) => fail(&err),
+                };
+            }
             let crate_name = full_repo
                 .rsplit('/')
                 .next()

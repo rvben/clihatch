@@ -1,8 +1,11 @@
 name: Release
 
-# Requires three repo secrets: CARGO_REGISTRY_TOKEN, PYPI_API_TOKEN, and
-# HOMEBREW_TAP_DEPLOY_KEY. Bootstrap them in one step once the repo is on GitHub:
+# Bootstrap the repo secrets this workflow needs once it is on GitHub:
 #     clihatch secrets {{name}}        # use --dry-run to preview
+#
+# Each target publishes in its own job, so one target's failure (for example a
+# registry rate limit) does not block the others. Re-run only the failed target
+# with: gh run rerun <run-id> --failed
 
 on:
   push:
@@ -20,11 +23,13 @@ on:
         required: false
         default: false
         type: boolean
+{{#pypi}}
       skip_pypi:
         description: 'Skip publishing to PyPI (if already published)'
         required: false
         default: false
         type: boolean
+{{/pypi}}
 
 permissions:
   contents: write
@@ -73,6 +78,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+{{#pypi}}
 
       # Portable wheels: maturin-action builds linux wheels inside a manylinux
       # container and macOS wheels natively.
@@ -82,6 +88,7 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: auto
+{{/pypi}}
 
       - name: Build binary
         run: cargo build --release --target ${{ matrix.target }}
@@ -107,12 +114,14 @@ jobs:
             sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
           fi
           rm -rf release-package
+{{#pypi}}
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.target }}
           path: dist/*.whl
+{{/pypi}}
 
       - name: Upload release archives
         uses: actions/upload-artifact@v4
@@ -120,6 +129,7 @@ jobs:
           name: release-${{ matrix.target }}
           path: |
             {{name}}-*-${{ matrix.target }}.tar.gz*
+{{#pypi}}
 
   sdist:
     name: Build source distribution
@@ -134,10 +144,14 @@ jobs:
         with:
           name: sdist
           path: dist/*.tar.gz
+{{/pypi}}
 
-  release:
+  # crates.io publishes independently: a failure here does not block the other
+  # targets, and `gh run rerun --failed` retries only this job.
+  publish-crates:
+    name: Publish to crates.io
+    needs: build
     runs-on: ubuntu-latest
-    needs: [build, sdist]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -155,23 +169,41 @@ jobs:
       - name: Skip crates.io publishing
         if: ${{ inputs.skip_crates_io == true }}
         run: echo "Skipping crates.io publishing as requested"
+{{#pypi}}
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Download all artifacts
+  # PyPI publishes independently (isolating new-project rate limits, etc.).
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build, sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: astral-sh/setup-uv@v6
+      - name: Download wheels and sdist
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-
       - name: Publish to PyPI
         if: ${{ inputs.dry_run != true && inputs.skip_pypi != true }}
         run: uv publish artifacts/wheel-*/*.whl artifacts/sdist/*.tar.gz
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+      - name: Skip PyPI publishing
+        if: ${{ inputs.dry_run == true || inputs.skip_pypi == true }}
+        run: echo "Skipping PyPI publish (dry run or requested)"
+{{/pypi}}
 
+  github-release:
+    name: Create GitHub release
+    needs: build
+    if: ${{ inputs.dry_run != true }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: artifacts
       - name: Create Release
-        if: ${{ inputs.dry_run != true }}
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
@@ -179,19 +211,16 @@ jobs:
             artifacts/release-*/{{name}}-*.tar.gz
             artifacts/release-*/{{name}}-*.tar.gz.sha256
 
-      - name: Dry Run Summary
-        if: ${{ inputs.dry_run == true }}
-        run: |
-          echo "Dry run complete. Artifacts built but nothing published."
-          find artifacts/release-* artifacts/wheel-* artifacts/sdist -type f | sort
-
   update-homebrew:
-    needs: release
-    if: ${{ !inputs.dry_run }}
+    name: Update Homebrew tap
+    needs: github-release
+    if: ${{ inputs.dry_run != true }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download release archives
+        uses: actions/download-artifact@v4
         with:
+          pattern: release-*
           path: /tmp/artifacts
 
       - name: Compute SHA256 hashes
@@ -259,7 +288,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
 
-          git clone git@github.com:rvben/homebrew-tap.git /tmp/tap
+          git clone git@github.com:{{owner}}/homebrew-tap.git /tmp/tap
           mkdir -p /tmp/tap/Formula
           cp /tmp/{{name}}.rb /tmp/tap/Formula/{{name}}.rb
           cd /tmp/tap

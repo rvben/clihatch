@@ -34,7 +34,8 @@ pub fn contract() -> Value {
                     {"name": "--author", "type": "string", "required": false, "description": "Cargo/LICENSE author (default: git config)."},
                     {"name": "--into", "type": "path", "required": false, "default": ".", "description": "Directory to create the crate inside."},
                     {"name": "--no-git", "type": "boolean", "required": false, "default": false, "description": "Skip git init + initial commit."},
-                    {"name": "--github", "type": "boolean", "required": false, "default": false, "description": "Also create the GitHub repo (owner/name) and push the initial commit. Requires git."}
+                    {"name": "--github", "type": "boolean", "required": false, "default": false, "description": "Also create the GitHub repo (owner/name) and push the initial commit. Requires git."},
+                    {"name": "--no-pypi", "type": "boolean", "required": false, "default": false, "description": "Omit the PyPI/maturin pipeline; the crate publishes to crates.io + Homebrew only."}
                 ],
                 "output_fields": [
                     {"name": "created", "type": "string", "description": "Path of the new crate directory."},
@@ -54,14 +55,17 @@ pub fn contract() -> Value {
                     {"name": "--owner", "type": "string", "required": false, "default": "rvben", "description": "GitHub owner, used when repo is a bare name."},
                     {"name": "--tap", "type": "string", "required": false, "default": "rvben/homebrew-tap", "description": "Homebrew tap repo to register the deploy key on."},
                     {"name": "--pypi-token-stdin", "type": "boolean", "required": false, "default": false, "description": "Read the PyPI token from stdin (otherwise $PYPI_API_TOKEN/$UV_PUBLISH_TOKEN, then the [pypi] token in ~/.pypirc)."},
-                    {"name": "--dry-run", "type": "boolean", "required": false, "default": false, "description": "Report what would be set without executing anything."}
+                    {"name": "--dry-run", "type": "boolean", "required": false, "default": false, "description": "Report what would be set without executing anything."},
+                    {"name": "--verify", "type": "boolean", "required": false, "default": false, "description": "Read-only: report which release secrets are already set on the repo (no changes). Outputs present/missing instead of set/skipped."}
                 ],
                 "output_fields": [
                     {"name": "repo", "type": "string", "description": "Resolved owner/name the secrets target."},
                     {"name": "dry_run", "type": "boolean"},
                     {"name": "set", "type": "string[]", "description": "Secret names set (or, in a dry run, that would be set)."},
                     {"name": "skipped", "type": "object[]", "description": "Secrets not set, each with `secret` and `reason`."},
-                    {"name": "notes", "type": "string[]", "description": "Side notes worth surfacing, e.g. a rotated deploy key."}
+                    {"name": "notes", "type": "string[]", "description": "Side notes worth surfacing, e.g. a rotated deploy key."},
+                    {"name": "present", "type": "string[]", "description": "With --verify: release secrets already set on the repo."},
+                    {"name": "missing", "type": "string[]", "description": "With --verify: release secrets not yet set."}
                 ]
             },
             {

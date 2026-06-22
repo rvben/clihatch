@@ -2,7 +2,7 @@
 
 use crate::OutputFormat;
 use crate::scaffold::Outcome;
-use crate::secrets::SecretReport;
+use crate::secrets::{SecretReport, VerifyReport};
 use serde_json::json;
 
 /// The suggested next steps, covering the path to a published release. When the
@@ -72,6 +72,23 @@ pub fn render_secrets(report: &SecretReport, format: OutputFormat) -> String {
             }
             for note in &report.notes {
                 out.push_str(&format!("\n  note: {note}"));
+            }
+            out
+        }
+    }
+}
+
+/// Render a `secrets --verify` report as text (TTY) or JSON (piped).
+pub fn render_verify(report: &VerifyReport, format: OutputFormat) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string(report).expect("report serializes"),
+        OutputFormat::Text => {
+            let mut out = format!("Release secrets on {}", report.repo);
+            if !report.present.is_empty() {
+                out.push_str(&format!("\n  set: {}", report.present.join(", ")));
+            }
+            if !report.missing.is_empty() {
+                out.push_str(&format!("\n  missing: {}", report.missing.join(", ")));
             }
             out
         }

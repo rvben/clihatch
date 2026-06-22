@@ -34,6 +34,37 @@ pub trait SecretOps {
         title: &str,
         public_key: &str,
     ) -> Result<bool, ClihatchError>;
+    /// List the names of the secrets currently set on `repo`.
+    fn list_secrets(&self, repo: &str) -> Result<Vec<String>, ClihatchError>;
+}
+
+/// The release secrets this tool bootstraps, in publish order.
+pub const RELEASE_SECRETS: [&str; 3] = [
+    "CARGO_REGISTRY_TOKEN",
+    "HOMEBREW_TAP_DEPLOY_KEY",
+    "PYPI_API_TOKEN",
+];
+
+/// The result of `secrets --verify`: which release secrets are set on the repo.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VerifyReport {
+    pub repo: String,
+    pub present: Vec<String>,
+    pub missing: Vec<String>,
+}
+
+/// Read-only check of which release secrets are already set on `repo`.
+pub fn verify(ops: &dyn SecretOps, repo: &str) -> Result<VerifyReport, ClihatchError> {
+    let existing = ops.list_secrets(repo)?;
+    let (present, missing) = RELEASE_SECRETS
+        .iter()
+        .map(|s| s.to_string())
+        .partition(|s| existing.iter().any(|e| e == s));
+    Ok(VerifyReport {
+        repo: repo.to_string(),
+        present,
+        missing,
+    })
 }
 
 /// The tokens and targets a run draws on.
@@ -342,6 +373,22 @@ impl<R: CommandRunner> SecretOps for RealSecretOps<R> {
             Err(ClihatchError::backend("gh", added.stderr))
         }
     }
+
+    fn list_secrets(&self, repo: &str) -> Result<Vec<String>, ClihatchError> {
+        let out = self.gh(&[
+            "secret", "list", "-R", repo, "--json", "name", "-q", ".[].name",
+        ])?;
+        if !out.success {
+            return Err(ClihatchError::backend("gh", out.stderr));
+        }
+        Ok(out
+            .stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect())
+    }
 }
 
 #[cfg(test)]
@@ -366,6 +413,9 @@ mod tests {
         fn add_deploy_key(&self, tap: &str, _t: &str, _k: &str) -> Result<bool, ClihatchError> {
             self.deploy_keys.borrow_mut().push(tap.into());
             Ok(false)
+        }
+        fn list_secrets(&self, _repo: &str) -> Result<Vec<String>, ClihatchError> {
+            Ok(Vec::new())
         }
     }
 
@@ -644,6 +694,25 @@ mod tests {
         assert_eq!(e.kind(), "backend");
         // Only the auth probe ran; no secret was set.
         assert_eq!(ops.runner.calls_to("gh").len(), 1);
+    }
+
+    #[test]
+    fn verify_partitions_present_and_missing_release_secrets() {
+        // `gh secret list` returns two of the three release secrets.
+        let runner =
+            RecordingRunner::with(vec![ok("CARGO_REGISTRY_TOKEN\nHOMEBREW_TAP_DEPLOY_KEY\n")]);
+        let ops = RealSecretOps::with_runner(runner);
+        let report = verify(&ops, "rvben/demo").unwrap();
+        assert_eq!(
+            report.present,
+            ["CARGO_REGISTRY_TOKEN", "HOMEBREW_TAP_DEPLOY_KEY"]
+        );
+        assert_eq!(report.missing, ["PYPI_API_TOKEN"]);
+        // Read-only argv: gh secret list -R <repo> --json name -q .[].name
+        let calls = ops.runner.calls_to("gh");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0[0..4], ["secret", "list", "-R", "rvben/demo"]);
+        assert!(calls[0].0.contains(&"--json".to_string()));
     }
 
     /// The real backend's only network-free operation: generating the keypair.

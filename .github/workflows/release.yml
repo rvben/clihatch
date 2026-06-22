@@ -1,5 +1,12 @@
 name: Release
 
+# Bootstrap the repo secrets this workflow needs once it is on GitHub:
+#     clihatch secrets clihatch        # use --dry-run to preview
+#
+# Each target publishes in its own job, so one target's failure (for example a
+# registry rate limit) does not block the others. Re-run only the failed target
+# with: gh run rerun <run-id> --failed
+
 on:
   push:
     tags:
@@ -131,9 +138,12 @@ jobs:
           name: sdist
           path: dist/*.tar.gz
 
-  release:
+  # crates.io publishes independently: a failure here does not block the other
+  # targets, and `gh run rerun --failed` retries only this job.
+  publish-crates:
+    name: Publish to crates.io
+    needs: build
     runs-on: ubuntu-latest
-    needs: [build, sdist]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -152,22 +162,38 @@ jobs:
         if: ${{ inputs.skip_crates_io == true }}
         run: echo "Skipping crates.io publishing as requested"
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Download all artifacts
+  # PyPI publishes independently (isolating new-project rate limits, etc.).
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build, sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: astral-sh/setup-uv@v6
+      - name: Download wheels and sdist
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-
       - name: Publish to PyPI
         if: ${{ inputs.dry_run != true && inputs.skip_pypi != true }}
         run: uv publish artifacts/wheel-*/*.whl artifacts/sdist/*.tar.gz
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+      - name: Skip PyPI publishing
+        if: ${{ inputs.dry_run == true || inputs.skip_pypi == true }}
+        run: echo "Skipping PyPI publish (dry run or requested)"
 
+  github-release:
+    name: Create GitHub release
+    needs: build
+    if: ${{ inputs.dry_run != true }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: artifacts
       - name: Create Release
-        if: ${{ inputs.dry_run != true }}
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
@@ -175,19 +201,16 @@ jobs:
             artifacts/release-*/clihatch-*.tar.gz
             artifacts/release-*/clihatch-*.tar.gz.sha256
 
-      - name: Dry Run Summary
-        if: ${{ inputs.dry_run == true }}
-        run: |
-          echo "Dry run complete. Artifacts built but nothing published."
-          find artifacts/release-* artifacts/wheel-* artifacts/sdist -type f | sort
-
   update-homebrew:
-    needs: release
-    if: ${{ !inputs.dry_run }}
+    name: Update Homebrew tap
+    needs: github-release
+    if: ${{ inputs.dry_run != true }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download release archives
+        uses: actions/download-artifact@v4
         with:
+          pattern: release-*
           path: /tmp/artifacts
 
       - name: Compute SHA256 hashes
