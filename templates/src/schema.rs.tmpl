@@ -1,13 +1,13 @@
-//! The clispec v0.2 contract emitted by `{{name}} schema`.
+//! The clispec v0.3 contract emitted by `{{name}} schema`.
 //!
-//! Conforms to <https://clispec.dev/schema/v0.2.json> (validated by a test
-//! against the vendored copy in `schemas/clispec-v0.2.json`). Keep this in sync
+//! Conforms to <https://clispec.dev/schema/v0.3.json> (validated by a test
+//! against the vendored copy in `schemas/clispec-v0.3.json`). Keep this in sync
 //! as you add commands, arguments, and error kinds.
 
 use serde_json::{Value, json};
 
 /// The version of The CLI Spec this document conforms to.
-pub const CLISPEC_VERSION: &str = "0.2";
+pub const CLISPEC_VERSION: &str = "0.3";
 
 /// Build the clispec contract as a JSON value.
 pub fn contract() -> Value {
@@ -16,6 +16,7 @@ pub fn contract() -> Value {
         "name": env!("CARGO_PKG_NAME"),
         "version": env!("CARGO_PKG_VERSION"),
         "description": env!("CARGO_PKG_DESCRIPTION"),
+        "output": {"tty": "text", "piped": "json"},
         "global_args": [
             {
                 "name": "--output",
@@ -29,7 +30,9 @@ pub fn contract() -> Value {
             {
                 "name": "run",
                 "description": "Double an integer. The default command, invoked as `{{name}} <value>`. Replace this with your own logic.",
+                "effects": "read_only",
                 "mutating": false,
+                "cardinality": "single",
                 "stability": "stable",
                 "args": [
                     {"name": "value", "type": "integer", "required": true, "description": "The integer to double."}
@@ -37,18 +40,25 @@ pub fn contract() -> Value {
                 "output_fields": [
                     {"name": "value", "type": "integer"},
                     {"name": "doubled", "type": "integer"}
-                ]
+                ],
+                "example": {"args": ["21"]}
             },
             {
                 "name": "schema",
                 "description": "Print this clispec contract as JSON.",
+                "effects": "read_only",
                 "mutating": false,
-                "stability": "stable"
+                "cardinality": "single",
+                "stability": "stable",
+                "stdout_schema": {"$ref": "https://clispec.dev/schema/v0.3.json"}
             },
             {
                 "name": "completions",
                 "description": "Generate a shell completion script.",
+                "effects": "read_only",
                 "mutating": false,
+                "output_kind": "opaque",
+                "media_type": "text/plain",
                 "stability": "stable",
                 "args": [
                     {"name": "shell", "type": "string", "required": true, "enum": ["bash", "zsh", "fish", "powershell", "elvish"], "description": "Target shell."}

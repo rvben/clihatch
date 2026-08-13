@@ -86,7 +86,7 @@ pub fn default_tap(repo: &str) -> String {
 }
 
 /// Crate-name rules: `[a-z][a-z0-9_-]*`, matching what crates.io accepts.
-fn validate_name(name: &str) -> Result<(), ClihatchError> {
+pub fn validate_name(name: &str) -> Result<(), ClihatchError> {
     let ok = name.len() <= 64
         && name.starts_with(|c: char| c.is_ascii_lowercase())
         && name

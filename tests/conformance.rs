@@ -1,10 +1,10 @@
-//! `clihatch schema` must validate against the published clispec v0.2 JSON
-//! Schema (vendored at schemas/clispec-v0.2.json).
+//! `clihatch schema` must validate against the published clispec v0.3 JSON
+//! Schema (vendored at schemas/clispec-v0.3.json).
 
 #[test]
-fn schema_conforms_to_clispec_v0_2() {
+fn schema_conforms_to_clispec_v0_3() {
     let schema: serde_json::Value =
-        serde_json::from_str(include_str!("../schemas/clispec-v0.2.json"))
+        serde_json::from_str(include_str!("../schemas/clispec-v0.3.json"))
             .expect("vendored clispec schema is valid JSON");
 
     let instance = clihatch::schema::contract();
@@ -16,7 +16,7 @@ fn schema_conforms_to_clispec_v0_2() {
             .map(|e| format!("{} at {}", e, e.instance_path()))
             .collect();
         panic!(
-            "clihatch schema does not conform to clispec v0.2:\n{}",
+            "clihatch schema does not conform to clispec v0.3:\n{}",
             errors.join("\n")
         );
     }
@@ -37,7 +37,7 @@ fn schema_marks_mutating_commands_correctly() {
     for name in ["new", "secrets"] {
         assert_eq!(mutating(name), true, "{name} writes and must be mutating");
     }
-    for name in ["schema", "completions"] {
+    for name in ["check", "schema", "completions"] {
         assert_eq!(mutating(name), false, "{name} must be read-only");
     }
 }

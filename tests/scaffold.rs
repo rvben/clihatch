@@ -56,7 +56,7 @@ fn scaffolds_the_expected_tree_with_no_leftover_placeholders() {
         "src/lib.rs",
         "src/error.rs",
         "src/schema.rs",
-        "schemas/clispec-v0.2.json",
+        "schemas/clispec-v0.3.json",
         "tests/conformance.rs",
         "tests/cli.rs",
         ".github/workflows/ci.yml",

@@ -66,6 +66,14 @@ enum Command {
         #[arg(long)]
         no_pypi: bool,
     },
+    /// Validate a crate name and report whether its destination is available.
+    Check {
+        /// Crate/binary name to validate.
+        name: String,
+        /// Parent directory that would receive the crate.
+        #[arg(long, default_value = ".")]
+        into: PathBuf,
+    },
     /// Bootstrap a repo's release secrets (Homebrew deploy key, cargo + PyPI tokens).
     Secrets {
         /// Target repo as owner/name, or a bare name (combined with --owner).
@@ -165,6 +173,31 @@ fn main() -> ExitCode {
                 }
                 Err(err) => fail(&err),
             }
+        }
+        Some(Command::Check { name, into }) => {
+            if let Err(err) = clihatch::validate_name(&name) {
+                return fail(&err);
+            }
+            let destination = into.join(&name);
+            let available = !destination.exists();
+            let value = json!({
+                "name": name,
+                "destination": destination,
+                "available": available
+            });
+            match format {
+                OutputFormat::Json => println!("{value}"),
+                OutputFormat::Text => println!(
+                    "{}: {}",
+                    value["destination"].as_str().unwrap_or_default(),
+                    if available {
+                        "available"
+                    } else {
+                        "already exists"
+                    }
+                ),
+            }
+            ExitCode::SUCCESS
         }
         Some(Command::Secrets {
             repo,
