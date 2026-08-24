@@ -48,6 +48,8 @@ fn scaffolds_the_expected_tree_with_no_leftover_placeholders() {
         "Cargo.toml",
         "pyproject.toml",
         "Makefile",
+        "vership.toml",
+        ".mise.toml",
         "README.md",
         "LICENSE",
         ".gitignore",
@@ -61,6 +63,7 @@ fn scaffolds_the_expected_tree_with_no_leftover_placeholders() {
         "tests/cli.rs",
         ".github/workflows/ci.yml",
         ".github/workflows/release.yml",
+        "docs/releases.md",
     ] {
         assert!(
             crate_dir.join(expected).exists(),
@@ -103,7 +106,7 @@ fn scaffolds_the_expected_tree_with_no_leftover_placeholders() {
         }
     }
 
-    assert!(outcome.files.len() >= 16);
+    assert!(outcome.files.len() >= 19);
     assert!(!outcome.committed);
     let _ = fs::remove_dir_all(&base);
 }
@@ -137,6 +140,62 @@ fn no_pypi_omits_pyproject_and_pypi_workflow_jobs() {
     assert!(!release.contains("{{#") && !release.contains("{{/"));
     assert!(release.contains("publish-crates"));
     assert!(release.contains("update-homebrew"));
+    assert!(crate_dir.join("vership.toml").exists());
+    assert!(crate_dir.join("docs/releases.md").exists());
+    let _ = fs::remove_dir_all(&base);
+}
+
+#[test]
+fn generated_automation_has_the_release_contract() {
+    let base = temp_dir().join("release-contract");
+    let _ = fs::create_dir_all(&base);
+    run(&request(&base, "release-tool")).expect("scaffold");
+    let crate_dir = base.join("release-tool");
+
+    let release = fs::read_to_string(crate_dir.join(".github/workflows/release.yml")).unwrap();
+    let ci = fs::read_to_string(crate_dir.join(".github/workflows/ci.yml")).unwrap();
+    for expected in [
+        "version:\n        description: 'Version to rehearse",
+        "Validate release metadata",
+        "Test crates.io publish (dry run)",
+        "Test PyPI artifacts (dry run)",
+        "Attest published release archives",
+        "A non-dry manual release must run from the existing",
+    ] {
+        assert!(
+            release.contains(expected),
+            "missing release contract: {expected}"
+        );
+    }
+
+    for workflow in [&release, &ci] {
+        for line in workflow.lines() {
+            let Some((_, uses)) = line.split_once("uses:") else {
+                continue;
+            };
+            let uses = uses.trim();
+            if uses.starts_with("./") {
+                continue;
+            }
+            let reference = uses
+                .split_once('@')
+                .unwrap_or_else(|| panic!("action has no ref: {uses}"))
+                .1
+                .split_whitespace()
+                .next()
+                .unwrap();
+            assert!(
+                reference.len() == 40 && reference.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "action is not commit-pinned: {uses}"
+            );
+        }
+    }
+
+    let vership = fs::read_to_string(crate_dir.join("vership.toml")).unwrap();
+    assert!(vership.contains("test_command = \"make check\""));
+    let runbook = fs::read_to_string(crate_dir.join("docs/releases.md")).unwrap();
+    assert!(runbook.contains("vership preflight"));
+    assert!(runbook.contains("vership verify"));
     let _ = fs::remove_dir_all(&base);
 }
 

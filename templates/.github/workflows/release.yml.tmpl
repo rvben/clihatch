@@ -13,6 +13,10 @@ on:
       - 'v[0-9]*.[0-9]*.[0-9]*'
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Version to rehearse (defaults to Cargo.toml)'
+        required: false
+        type: string
       dry_run:
         description: 'Dry run mode (skip actual publishing)'
         required: false
@@ -32,7 +36,7 @@ on:
 {{/pypi}}
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -41,13 +45,66 @@ env:
   CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
+  metadata:
+    name: Validate release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Resolve and validate release metadata
+        id: release
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          manifest_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          version="${REQUESTED_VERSION#v}"
+          version="${version:-$manifest_version}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $version" >&2
+            exit 1
+          fi
+          if [[ "$manifest_version" != "$version" ]]; then
+            echo "Cargo.toml is $manifest_version but requested version is $version" >&2
+            exit 1
+          fi
+          if [[ -f pyproject.toml ]]; then
+            python_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml | head -1)
+            if [[ -n "$python_version" && "$python_version" != "$version" ]]; then
+              echo "pyproject.toml is $python_version but Cargo.toml is $version" >&2
+              exit 1
+            fi
+          fi
+          tag="v${version}"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_NAME}" != "$tag" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package version $tag" >&2
+            exit 1
+          fi
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "$DRY_RUN" != "true" ]]; then
+            if [[ "${GITHUB_REF_TYPE}" != "tag" || "${GITHUB_REF_NAME}" != "$tag" ]]; then
+              echo "A non-dry manual release must run from the existing $tag tag" >&2
+              exit 1
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   test:
     name: Run tests
+    needs: metadata
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@nextest
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          install: false
+      - name: Install test tools
+        run: |
+          mise install rust cargo-binstall
+          mise install cargo:cargo-nextest
       - name: Verify Cargo.lock is up to date
         run: cargo check --locked
       - name: Run tests
@@ -55,7 +112,7 @@ jobs:
 
   build:
     name: Build ${{ matrix.target }}
-    needs: test
+    needs: [metadata, test]
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -72,18 +129,23 @@ jobs:
             target: x86_64-apple-darwin
             cross: true
     runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
         with:
-          targets: ${{ matrix.target }}
+          install: false
+      - name: Install Rust
+        run: mise install rust
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
 {{#pypi}}
 
       # Portable wheels: maturin-action builds linux wheels inside a manylinux
       # container and macOS wheels natively.
       - name: Build wheel
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.target }}
           args: --release --out dist
@@ -101,9 +163,7 @@ jobs:
       - name: Create release archive
         shell: bash
         run: |
-          # GITHUB_REF_NAME is the tag on a release (v1.2.3) and the branch on
-          # a workflow_dispatch dry run (main); both are free of slashes.
-          VERSION="${GITHUB_REF_NAME}"
+          VERSION="$RELEASE_TAG"
           ARCHIVE_NAME="{{name}}-${VERSION}-${{ matrix.target }}"
           mkdir -p release-package
           cp "target/${{ matrix.target }}/release/{{name}}" release-package/{{name}}
@@ -117,14 +177,14 @@ jobs:
 {{#pypi}}
 
       - name: Upload wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wheel-${{ matrix.target }}
           path: dist/*.whl
 {{/pypi}}
 
       - name: Upload release archives
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-${{ matrix.target }}
           path: |
@@ -133,14 +193,14 @@ jobs:
 
   sdist:
     name: Build source distribution
-    needs: test
+    needs: [metadata, test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - name: Build sdist
-        run: uvx maturin sdist --out dist
-      - uses: actions/upload-artifact@v4
+        run: uvx --from maturin==1.14.1 maturin sdist --out dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -150,11 +210,15 @@ jobs:
   # targets, and `gh run rerun --failed` retries only this job.
   publish-crates:
     name: Publish to crates.io
-    needs: build
+    needs: [metadata, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          install: false
+      - name: Install Rust
+        run: mise install rust
 
       - name: Publish to crates.io
         if: ${{ inputs.dry_run != true && inputs.skip_crates_io != true }}
@@ -174,12 +238,12 @@ jobs:
   # PyPI publishes independently (isolating new-project rate limits, etc.).
   publish-pypi:
     name: Publish to PyPI
-    needs: [build, sdist]
+    needs: [metadata, build, sdist]
     runs-on: ubuntu-latest
     steps:
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - name: Download wheels and sdist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
       - name: Publish to PyPI
@@ -187,38 +251,49 @@ jobs:
         run: uv publish artifacts/wheel-*/*.whl artifacts/sdist/*.tar.gz
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+      - name: Test PyPI artifacts (dry run)
+        if: ${{ inputs.dry_run == true && inputs.skip_pypi != true }}
+        run: uvx --from twine==6.2.0 twine check --strict artifacts/wheel-*/*.whl artifacts/sdist/*.tar.gz
       - name: Skip PyPI publishing
-        if: ${{ inputs.dry_run == true || inputs.skip_pypi == true }}
-        run: echo "Skipping PyPI publish (dry run or requested)"
+        if: ${{ inputs.skip_pypi == true }}
+        run: echo "Skipping PyPI publishing as requested"
 {{/pypi}}
 
   github-release:
     name: Create GitHub release
-    needs: build
+    needs: [metadata, build]
     if: ${{ inputs.dry_run != true }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Download release archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-*
           path: artifacts
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           generate_release_notes: true
           files: |
             artifacts/release-*/{{name}}-*.tar.gz
             artifacts/release-*/{{name}}-*.tar.gz.sha256
+      - name: Attest published release archives
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: artifacts/release-*/{{name}}-*.tar.gz
 
   update-homebrew:
     name: Update Homebrew tap
-    needs: github-release
+    needs: [metadata, github-release]
     if: ${{ inputs.dry_run != true }}
     runs-on: ubuntu-latest
     steps:
       - name: Download release archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-*
           path: /tmp/artifacts
@@ -227,7 +302,7 @@ jobs:
         id: hashes
         run: |
           for target in x86_64-apple-darwin aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
-            sha=$(cat /tmp/artifacts/release-${target}/{{name}}-${{ github.ref_name }}-${target}.tar.gz.sha256 | awk '{print $1}')
+            sha=$(cat /tmp/artifacts/release-${target}/{{name}}-${{ needs.metadata.outputs.tag }}-${target}.tar.gz.sha256 | awk '{print $1}')
             key=$(echo "${target}" | tr '-' '_')
             echo "${key}=${sha}" >> "$GITHUB_OUTPUT"
           done
@@ -236,7 +311,11 @@ jobs:
         env:
           HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
         run: |
-          VERSION="${{ github.ref_name }}"
+          if [ -z "$HOMEBREW_TAP_DEPLOY_KEY" ]; then
+            echo "HOMEBREW_TAP_DEPLOY_KEY is not configured; skipping Homebrew update."
+            exit 0
+          fi
+          VERSION="${{ needs.metadata.outputs.tag }}"
           VERSION_NUM="${VERSION#v}"
 
           cat > /tmp/{{name}}.rb << 'FORMULA'
