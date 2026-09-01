@@ -18,7 +18,7 @@ pub use output::{next_steps, render, render_secrets, render_verify};
 pub use scaffold::{Outcome, Vars, scaffold};
 pub use secrets::{
     RealSecretOps, SecretOps, SecretReport, Skip, Sources, VerifyReport, bootstrap,
-    cargo_token_from_credentials, pypi_token_from_pypirc, verify,
+    pypi_token_from_pypirc, verify,
 };
 
 use std::path::PathBuf;

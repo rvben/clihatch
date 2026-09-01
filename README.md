@@ -36,7 +36,7 @@ does three of them:
 ```sh
 clihatch new my-tool --github   # scaffold + git commit + create & push the repo
 cd my-tool && make check        # lint + tests, green out of the box
-clihatch secrets my-tool        # bootstrap the three release secrets
+clihatch secrets my-tool        # bootstrap the remaining release secrets
 vership release                 # tag + dual-publish
 ```
 
@@ -47,8 +47,9 @@ lists the remaining steps through to a release.
 
 ### Bootstrap release secrets
 
-Once the repo exists on GitHub, wire up the three secrets the release pipeline
-needs in one step:
+Once the repo exists on GitHub, wire up the remaining secrets the release
+pipeline needs in one step. crates.io uses OIDC Trusted Publishing, so no
+long-lived Cargo token is stored:
 
 ```sh
 clihatch secrets my-tool            # -> rvben/my-tool
@@ -59,8 +60,6 @@ clihatch secrets my-tool --verify   # read-only: which secrets are already set
 - **`HOMEBREW_TAP_DEPLOY_KEY`** - generates an ed25519 key, registers it as a
   write deploy key on the tap (`--tap`, default `rvben/homebrew-tap`), and
   stores the private key. This is the fiddly part, fully automated.
-- **`CARGO_REGISTRY_TOKEN`** - read from `$CARGO_REGISTRY_TOKEN` or
-  `~/.cargo/credentials.toml`.
 - **`PYPI_API_TOKEN`** - read from `$PYPI_API_TOKEN` / `$UV_PUBLISH_TOKEN`, the
   `[pypi]` token in `~/.pypirc`, or `--pypi-token-stdin`.
 

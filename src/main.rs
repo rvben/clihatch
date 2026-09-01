@@ -13,8 +13,7 @@ use clap::error::ErrorKind as ClapErrorKind;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clihatch::{
     ClihatchError, OutputFormat, RealSecretOps, Request, Sources, bootstrap,
-    cargo_token_from_credentials, pypi_token_from_pypirc, render, render_secrets, render_verify,
-    run, schema,
+    pypi_token_from_pypirc, render, render_secrets, render_verify, run, schema,
 };
 use serde_json::json;
 
@@ -74,7 +73,7 @@ enum Command {
         #[arg(long, default_value = ".")]
         into: PathBuf,
     },
-    /// Bootstrap a repo's release secrets (Homebrew deploy key, cargo + PyPI tokens).
+    /// Bootstrap a repo's release secrets (Homebrew deploy key and PyPI token).
     Secrets {
         /// Target repo as owner/name, or a bare name (combined with --owner).
         repo: String,
@@ -236,7 +235,6 @@ fn main() -> ExitCode {
             let sources = Sources {
                 crate_name,
                 tap,
-                cargo_token: read_cargo_token(),
                 pypi_token,
             };
             match bootstrap(&RealSecretOps::new(), &full_repo, &sources, dry_run) {
@@ -254,24 +252,6 @@ fn main() -> ExitCode {
             fail(&err)
         }
     }
-}
-
-/// Read the crates.io token from `$CARGO_REGISTRY_TOKEN`, else from the Cargo
-/// credentials file under `$CARGO_HOME` (or `~/.cargo`).
-fn read_cargo_token() -> Option<String> {
-    if let Ok(token) = std::env::var("CARGO_REGISTRY_TOKEN") {
-        let token = token.trim();
-        if !token.is_empty() {
-            return Some(token.to_string());
-        }
-    }
-    let cargo_home = std::env::var("CARGO_HOME")
-        .unwrap_or_else(|_| format!("{}/.cargo", std::env::var("HOME").unwrap_or_default()));
-    let dir = PathBuf::from(cargo_home);
-    let contents = std::fs::read_to_string(dir.join("credentials.toml"))
-        .or_else(|_| std::fs::read_to_string(dir.join("credentials")))
-        .ok()?;
-    cargo_token_from_credentials(&contents)
 }
 
 /// Resolve the PyPI token: stdin when requested, else `$PYPI_API_TOKEN` /

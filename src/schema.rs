@@ -67,7 +67,7 @@ pub fn contract() -> Value {
             },
             {
                 "name": "secrets",
-                "description": "Bootstrap a repo's release secrets: generate + register the Homebrew tap deploy key (rotating any prior key with the same title), and set CARGO_REGISTRY_TOKEN / PYPI_API_TOKEN from local sources. Preflights `gh` auth and repo access; missing token sources are skipped, not invented.",
+                "description": "Bootstrap a repo's remaining release secrets: generate + register the Homebrew tap deploy key (rotating any prior key with the same title), and set PYPI_API_TOKEN from local sources. crates.io uses OIDC Trusted Publishing. Preflights `gh` auth and repo access; missing token sources are skipped, not invented.",
                 "effects": "non_idempotent",
                 "mutating": true,
                 "cardinality": "bounded",

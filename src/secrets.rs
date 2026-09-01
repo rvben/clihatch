@@ -1,9 +1,10 @@
-//! Bootstrap a repo's three release secrets:
+//! Bootstrap a repo's remaining release secrets:
 //! - `HOMEBREW_TAP_DEPLOY_KEY` - generate an ed25519 key, register it as a
 //!   write deploy key on the tap (rotating any prior key with the same title),
 //!   and store the private key (fully automated);
-//! - `CARGO_REGISTRY_TOKEN` - from `~/.cargo/credentials.toml`;
 //! - `PYPI_API_TOKEN` - from the environment / stdin.
+//! crates.io authentication is intentionally omitted: generated workflows use
+//! GitHub OIDC Trusted Publishing and do not need a long-lived repository secret.
 //!
 //! Two seams keep this testable offline:
 //! - [`SecretOps`] - the orchestration substitutes a fake backend;
@@ -39,11 +40,7 @@ pub trait SecretOps {
 }
 
 /// The release secrets this tool bootstraps, in publish order.
-pub const RELEASE_SECRETS: [&str; 3] = [
-    "CARGO_REGISTRY_TOKEN",
-    "HOMEBREW_TAP_DEPLOY_KEY",
-    "PYPI_API_TOKEN",
-];
+pub const RELEASE_SECRETS: [&str; 2] = ["HOMEBREW_TAP_DEPLOY_KEY", "PYPI_API_TOKEN"];
 
 /// The result of `secrets --verify`: which release secrets are set on the repo.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -72,7 +69,6 @@ pub fn verify(ops: &dyn SecretOps, repo: &str) -> Result<VerifyReport, ClihatchE
 pub struct Sources {
     pub crate_name: String,
     pub tap: String,
-    pub cargo_token: Option<String>,
     pub pypi_token: Option<String>,
 }
 
@@ -110,19 +106,6 @@ pub fn bootstrap(
         ops.preflight(repo)?;
     }
 
-    match &sources.cargo_token {
-        Some(token) => {
-            if !dry_run {
-                ops.set_secret(repo, "CARGO_REGISTRY_TOKEN", token)?;
-            }
-            set.push("CARGO_REGISTRY_TOKEN".to_string());
-        }
-        None => skipped.push(Skip {
-            secret: "CARGO_REGISTRY_TOKEN".into(),
-            reason: "no token in ~/.cargo/credentials.toml (run `cargo login`)".into(),
-        }),
-    }
-
     // Homebrew deploy key: the part worth automating.
     if !dry_run {
         let title = format!("{} release (CI push)", sources.crate_name);
@@ -157,36 +140,6 @@ pub fn bootstrap(
         skipped,
         notes,
     })
-}
-
-/// Extract the crates.io token from a Cargo `credentials.toml`. Handles both
-/// `[registry]` and `[registries.crates-io]`; falls back to the first token
-/// found if neither of those is present.
-pub fn cargo_token_from_credentials(toml: &str) -> Option<String> {
-    let mut section = String::new();
-    let mut fallback = None;
-    for raw in toml.lines() {
-        let line = raw.trim();
-        if let Some(inner) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            section = inner.trim().to_string();
-            continue;
-        }
-        let Some(rest) = line.strip_prefix("token") else {
-            continue;
-        };
-        let Some(rest) = rest.trim_start().strip_prefix('=') else {
-            continue;
-        };
-        let value = rest.trim().trim_matches('"').to_string();
-        if value.is_empty() {
-            continue;
-        }
-        if section == "registry" || section == "registries.crates-io" {
-            return Some(value);
-        }
-        fallback.get_or_insert(value);
-    }
-    fallback
 }
 
 /// Extract the PyPI upload token from a `.pypirc`: the `password` under the
@@ -419,33 +372,19 @@ mod tests {
         }
     }
 
-    fn sources(cargo: Option<&str>, pypi: Option<&str>) -> Sources {
+    fn sources(pypi: Option<&str>) -> Sources {
         Sources {
             crate_name: "demo".into(),
             tap: "rvben/homebrew-tap".into(),
-            cargo_token: cargo.map(String::from),
             pypi_token: pypi.map(String::from),
         }
     }
 
     #[test]
-    fn sets_all_three_when_sources_present() {
+    fn sets_both_when_sources_present() {
         let ops = FakeOps::default();
-        let report = bootstrap(
-            &ops,
-            "rvben/demo",
-            &sources(Some("cio_x"), Some("pypi-y")),
-            false,
-        )
-        .unwrap();
-        assert_eq!(
-            report.set,
-            [
-                "CARGO_REGISTRY_TOKEN",
-                "HOMEBREW_TAP_DEPLOY_KEY",
-                "PYPI_API_TOKEN"
-            ]
-        );
+        let report = bootstrap(&ops, "rvben/demo", &sources(Some("pypi-y")), false).unwrap();
+        assert_eq!(report.set, ["HOMEBREW_TAP_DEPLOY_KEY", "PYPI_API_TOKEN"]);
         assert!(report.skipped.is_empty());
         let names: Vec<String> = ops
             .secrets
@@ -453,29 +392,22 @@ mod tests {
             .iter()
             .map(|(n, _)| n.clone())
             .collect();
-        assert_eq!(
-            names,
-            [
-                "CARGO_REGISTRY_TOKEN",
-                "HOMEBREW_TAP_DEPLOY_KEY",
-                "PYPI_API_TOKEN"
-            ]
-        );
+        assert_eq!(names, ["HOMEBREW_TAP_DEPLOY_KEY", "PYPI_API_TOKEN"]);
         assert_eq!(*ops.deploy_keys.borrow(), ["rvben/homebrew-tap"]);
     }
 
     #[test]
     fn skips_missing_token_sources_but_still_does_homebrew() {
         let ops = FakeOps::default();
-        let report = bootstrap(&ops, "rvben/demo", &sources(None, None), false).unwrap();
+        let report = bootstrap(&ops, "rvben/demo", &sources(None), false).unwrap();
         assert_eq!(report.set, ["HOMEBREW_TAP_DEPLOY_KEY"]);
-        assert_eq!(report.skipped.len(), 2);
+        assert_eq!(report.skipped.len(), 1);
     }
 
     #[test]
     fn dry_run_executes_nothing() {
         let ops = FakeOps::default();
-        let report = bootstrap(&ops, "rvben/demo", &sources(Some("cio_x"), None), true).unwrap();
+        let report = bootstrap(&ops, "rvben/demo", &sources(None), true).unwrap();
         assert!(report.dry_run);
         assert!(
             ops.secrets.borrow().is_empty(),
@@ -486,26 +418,6 @@ mod tests {
             "dry run must not register keys"
         );
         assert!(report.set.contains(&"HOMEBREW_TAP_DEPLOY_KEY".to_string()));
-    }
-
-    #[test]
-    fn parses_cargo_token_from_registry_section() {
-        let creds = "[registry]\ntoken = \"cio_abc123\"\n";
-        assert_eq!(
-            cargo_token_from_credentials(creds),
-            Some("cio_abc123".into())
-        );
-    }
-
-    #[test]
-    fn parses_cargo_token_from_crates_io_section() {
-        let creds = "[registries.crates-io]\ntoken = \"cio_xyz\"\n";
-        assert_eq!(cargo_token_from_credentials(creds), Some("cio_xyz".into()));
-    }
-
-    #[test]
-    fn no_cargo_token_when_absent() {
-        assert_eq!(cargo_token_from_credentials("[other]\nkey = 1\n"), None);
     }
 
     #[test]
@@ -597,7 +509,7 @@ mod tests {
     #[test]
     fn set_secret_pipes_value_on_stdin_with_correct_argv() {
         let ops = RealSecretOps::with_runner(RecordingRunner::default());
-        ops.set_secret("rvben/demo", "CARGO_REGISTRY_TOKEN", "cio_secret")
+        ops.set_secret("rvben/demo", "PYPI_API_TOKEN", "pypi-secret")
             .unwrap();
         let calls = ops.runner.calls_to("gh");
         assert_eq!(
@@ -606,11 +518,11 @@ mod tests {
                 vec![
                     "secret".into(),
                     "set".into(),
-                    "CARGO_REGISTRY_TOKEN".into(),
+                    "PYPI_API_TOKEN".into(),
                     "-R".into(),
                     "rvben/demo".into()
                 ],
-                Some("cio_secret".into())
+                Some("pypi-secret".into())
             )]
         );
     }
@@ -690,7 +602,7 @@ mod tests {
     fn bootstrap_preflight_aborts_before_any_mutation() {
         let runner = RecordingRunner::with(vec![err("not logged in")]);
         let ops = RealSecretOps::with_runner(runner);
-        let e = bootstrap(&ops, "rvben/demo", &sources(Some("cio"), None), false).unwrap_err();
+        let e = bootstrap(&ops, "rvben/demo", &sources(None), false).unwrap_err();
         assert_eq!(e.kind(), "backend");
         // Only the auth probe ran; no secret was set.
         assert_eq!(ops.runner.calls_to("gh").len(), 1);
@@ -698,15 +610,11 @@ mod tests {
 
     #[test]
     fn verify_partitions_present_and_missing_release_secrets() {
-        // `gh secret list` returns two of the three release secrets.
-        let runner =
-            RecordingRunner::with(vec![ok("CARGO_REGISTRY_TOKEN\nHOMEBREW_TAP_DEPLOY_KEY\n")]);
+        // `gh secret list` returns one of the two release secrets.
+        let runner = RecordingRunner::with(vec![ok("HOMEBREW_TAP_DEPLOY_KEY\n")]);
         let ops = RealSecretOps::with_runner(runner);
         let report = verify(&ops, "rvben/demo").unwrap();
-        assert_eq!(
-            report.present,
-            ["CARGO_REGISTRY_TOKEN", "HOMEBREW_TAP_DEPLOY_KEY"]
-        );
+        assert_eq!(report.present, ["HOMEBREW_TAP_DEPLOY_KEY"]);
         assert_eq!(report.missing, ["PYPI_API_TOKEN"]);
         // Read-only argv: gh secret list -R <repo> --json name -q .[].name
         let calls = ops.runner.calls_to("gh");
