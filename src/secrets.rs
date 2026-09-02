@@ -3,6 +3,7 @@
 //!   write deploy key on the tap (rotating any prior key with the same title),
 //!   and store the private key (fully automated);
 //! - `PYPI_API_TOKEN` - from the environment / stdin.
+//!
 //! crates.io authentication is intentionally omitted: generated workflows use
 //! GitHub OIDC Trusted Publishing and do not need a long-lived repository secret.
 //!
