@@ -2,3 +2,6 @@
 /dist
 .DS_Store
 *.swp
+/.direnv/
+/result
+/result-*

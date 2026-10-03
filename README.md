@@ -15,6 +15,55 @@ sed-ing the name.
 cargo install clihatch
 ```
 
+### Nix
+
+With Nix’s `nix-command` and `flakes` features enabled, packages are available
+for Linux x64/ARM64 and Apple Silicon macOS:
+
+```sh
+nix run github:rvben/clihatch -- --help
+nix build github:rvben/clihatch
+```
+
+The Nix package supplies Git, GitHub CLI, and OpenSSH for repository creation
+and secret management. Cargo is optional for formatting generated sources;
+`nix develop` provides it.
+
+Both `Cargo.lock` and `flake.lock` are committed. The package runs the Rust test
+suite and checks the installed command and Bash, Fish, and Zsh completions.
+Intel Macs are not supported by the pinned nixpkgs; use the other installation
+methods above.
+
+For NixOS or Home Manager, add the input to your flake:
+
+```nix
+inputs.clihatch = {
+  url = "github:rvben/clihatch";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+```
+
+Then add `inputs.clihatch.packages.${pkgs.stdenv.hostPlatform.system}.default`
+to `environment.systemPackages` (NixOS) or `home.packages` (Home Manager).
+Pass `inputs` through `specialArgs` for `nixosSystem` or `extraSpecialArgs` for
+`homeManagerConfiguration`. The overlay `inputs.clihatch.overlays.default`
+also provides `pkgs.clihatch` using your package set and Rust toolchain overrides.
+Following your own nixpkgs uses its toolchain; it must meet the Rust version
+required by `Cargo.toml` and support your platform.
+
+For development:
+
+```sh
+nix develop
+nix flake check                  # build, Rust tests, installed-command checks
+nix fmt -- --check flake.nix nix/*.nix
+```
+
+`direnv allow` is optional and requires nix-direnv. The development shell
+includes the package's native build dependencies and Rust development tools.
+Update Nix inputs deliberately with `nix flake update`, review the lockfile,
+and run the checks before committing it.
+
 ## Usage
 
 ```sh
@@ -85,6 +134,10 @@ A ready-to-`cargo build`, ready-to-release crate:
   failed one with `gh run rerun --failed`. Includes `pyproject.toml` (maturin)
   for the PyPI wheel unless `--no-pypi`, plus `Makefile`, `prek.toml`,
   `README.md`, `LICENSE`, `.gitignore`.
+- **Nix packaging** - `flake.nix`, `nix/package.nix`, a development shell, shell
+  completions, native Linux/macOS CI, and committed `Cargo.lock` + `flake.lock`.
+  Lockfiles are rendered from tested templates, so scaffolding needs neither
+  network access nor a Nix installation.
 - A `git init` + initial commit (skip with `--no-git`). Generated sources are
   `cargo fmt`-clean.
 
@@ -119,3 +172,15 @@ MIT
 
 Vership owns versioning, changelog generation, release commits, and tags. See
 [the release runbook](docs/releases.md) for the verified workflow and recovery policy.
+
+## Maintaining the templates
+
+The checked-in lock templates make a newly generated repository reproducible.
+Run `scripts/update-template-locks.sh` when updating template dependencies or
+nixpkgs. It resolves dependencies in a temporary generated project, then refreshes
+`templates/Cargo.lock.tmpl`, `flake.lock`, and `templates/flake.lock.tmpl`.
+Review the resulting changes and run `make check`,
+`cargo test --locked --test compiles -- --ignored`, and `nix flake check`.
+The explicit Cargo compile check fails on registry errors; it never silently
+passes. Nix additionally builds and tests an actual generated project without
+network access in the build sandbox or import-from-derivation during evaluation.

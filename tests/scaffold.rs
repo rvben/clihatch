@@ -46,6 +46,11 @@ fn scaffolds_the_expected_tree_with_no_leftover_placeholders() {
 
     for expected in [
         "Cargo.toml",
+        "Cargo.lock",
+        "flake.nix",
+        "flake.lock",
+        "nix/package.nix",
+        ".envrc",
         "pyproject.toml",
         "Makefile",
         "vership.toml",
@@ -216,6 +221,16 @@ fn git_scaffold_lands_on_main_branch() {
         .output()
         .expect("git");
     assert_eq!(String::from_utf8_lossy(&branch.stdout).trim(), "main");
+    let tracked = std::process::Command::new("git")
+        .current_dir(&crate_dir)
+        .args(["ls-tree", "--name-only", "HEAD", "Cargo.lock", "flake.lock"])
+        .output()
+        .expect("git ls-tree");
+    assert!(tracked.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&tracked.stdout),
+        "Cargo.lock\nflake.lock\n"
+    );
     let _ = fs::remove_dir_all(&base);
 }
 

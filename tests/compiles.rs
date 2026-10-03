@@ -1,6 +1,7 @@
 //! The deep guard: scaffold a crate and `cargo check` it, proving the
-//! templates produce code that actually compiles. Tolerant of an offline /
-//! unavailable registry (skips), but a genuine compile error fails loudly.
+//! templates produce code that actually compiles with the shipped lockfile.
+//! Run explicitly in Cargo CI; Nix tests generated projects hermetically through
+//! checks.generated instead of downloading dependencies inside its sandbox.
 
 use std::fs;
 use std::process::Command;
@@ -8,6 +9,7 @@ use std::process::Command;
 use clihatch::{Request, run};
 
 #[test]
+#[ignore = "requires a populated Cargo cache or registry access; run explicitly in CI"]
 fn generated_crate_compiles() {
     let base = std::env::temp_dir().join(format!("clihatch-compile-{}", std::process::id()));
     let _ = fs::create_dir_all(&base);
@@ -27,27 +29,15 @@ fn generated_crate_compiles() {
 
     let out = Command::new("cargo")
         .current_dir(&crate_dir)
-        .args(["check", "--quiet"])
+        // Do not contend with the outer Cargo invocation's target-directory lock.
+        .env("CARGO_TARGET_DIR", crate_dir.join("target"))
+        .args(["check", "--locked", "--quiet"])
         .output()
         .expect("run cargo");
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     let _ = fs::remove_dir_all(&base);
 
     if out.status.success() {
-        return;
-    }
-    let networkish = [
-        "failed to download",
-        "failed to get",
-        "Unable to update registry",
-        "Blocking waiting",
-        "could not fetch",
-        "no matching package",
-        "failed to load source",
-        "spurious network error",
-    ];
-    if networkish.iter().any(|m| stderr.contains(m)) {
-        eprintln!("skipping (registry unavailable):\n{stderr}");
         return;
     }
     panic!("generated crate failed to compile:\n{stderr}");

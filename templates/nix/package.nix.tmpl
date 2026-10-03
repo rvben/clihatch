@@ -1,0 +1,69 @@
+{
+  lib,
+  stdenv,
+  rustPlatform,
+  installShellFiles,
+  # Group source overrides so callPackage cannot inject packages named src or manifest.
+  sourceOverrides ? { },
+}:
+
+let
+  manifest = sourceOverrides.manifest or (lib.importTOML ../Cargo.toml);
+  src =
+    sourceOverrides.src or (lib.fileset.toSource {
+      root = ../.;
+      fileset = lib.fileset.unions [
+        ../Cargo.toml
+        ../Cargo.lock
+        ../src
+        ../tests
+        ../schemas
+        ../README.md
+        ../LICENSE
+      ];
+    });
+  cargoLock = sourceOverrides.cargoLock or { lockFile = ../Cargo.lock; };
+in
+
+rustPlatform.buildRustPackage (finalAttrs: {
+  pname = manifest.package.name;
+  version = manifest.package.version;
+  inherit src cargoLock;
+  nativeBuildInputs = [ installShellFiles ];
+  doCheck = stdenv.buildPlatform.canExecute stdenv.hostPlatform;
+
+  postInstall = lib.optionalString (stdenv.buildPlatform.canExecute stdenv.hostPlatform) ''
+    for shell in bash fish zsh; do
+      "$out/bin/${finalAttrs.pname}" completions "$shell" > "${finalAttrs.pname}.$shell"
+    done
+    installShellCompletion ${finalAttrs.pname}.{bash,fish,zsh}
+  '';
+
+  doInstallCheck = stdenv.buildPlatform.canExecute stdenv.hostPlatform;
+  installCheckPhase = ''
+    runHook preInstallCheck
+    test "$("$out/bin/${finalAttrs.pname}" --version)" = "${finalAttrs.pname} ${finalAttrs.version}"
+    "$out/bin/${finalAttrs.pname}" --help > /dev/null
+    for completion in \
+      "$out/share/bash-completion/completions/${finalAttrs.pname}.bash" \
+      "$out/share/fish/vendor_completions.d/${finalAttrs.pname}.fish" \
+      "$out/share/zsh/site-functions/_${finalAttrs.pname}"; do
+      if ! test -s "$completion"; then
+        echo "Missing or empty completion file: $completion" >&2
+        exit 1
+      fi
+    done
+    runHook postInstallCheck
+  '';
+
+  meta = {
+    inherit (manifest.package) description homepage;
+    license = lib.licenses.mit;
+    mainProgram = manifest.package.name;
+    platforms = [
+      "x86_64-linux"
+      "aarch64-linux"
+      "aarch64-darwin"
+    ];
+  };
+})

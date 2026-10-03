@@ -37,16 +37,64 @@ jobs:
           tool: nextest
       - name: Run tests
         run: make test
+      - name: Compile a generated project with its shipped lockfile
+        run: cargo test --locked --test compiles -- --ignored
+
+  nix:
+    name: Nix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+      - name: Check Nix formatting and template lock consistency
+        run: |
+          # checks.generated must use the same Nixpkgs pin as generated projects.
+          cmp flake.lock templates/flake.lock.tmpl
+          nix fmt -- --check flake.nix nix/*.nix
+          for template in templates/*.nix.tmpl templates/nix/*.nix.tmpl; do
+            nix fmt -- --check - < "$template"
+          done
+      - name: Evaluate every supported platform without building during evaluation
+        run: nix flake check --all-systems --no-build --no-update-lock-file --option allow-import-from-derivation false
+      - name: Smoke-test the development shell
+        run: |
+          nix develop --command bash -eu <<'SHELL'
+          cargo --version
+          rustc --version
+          cargo nextest --version
+          test -d "$RUST_SRC_PATH"
+          SHELL
+      - name: Build and test the native packages
+        run: nix flake check --print-build-logs --no-update-lock-file
+      - name: Validate the rendered flakes with and without Python packaging
+        run: |
+          for project in nix-rendered nix-rust-only; do
+            extra=()
+            if [ "$project" = nix-rust-only ]; then extra+=(--no-pypi); fi
+            nix run . -- new "$project" --no-git --into "$RUNNER_TEMP" \
+              --author Template --owner example "${extra[@]}"
+            nix fmt -- --check "$RUNNER_TEMP/$project/flake.nix" "$RUNNER_TEMP/$project/nix/"*.nix
+            nix flake check "path:$RUNNER_TEMP/$project" --all-systems --no-build \
+              --no-update-lock-file --option allow-import-from-derivation false
+          done
 
   all-checks-passed:
     name: All checks passed
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [lint, test, nix]
     if: always()
     steps:
       - name: Verify all checks passed
         run: |
-          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]; then
+          if [ "${{ needs.lint.result }}" != "success" ] || [ "${{ needs.test.result }}" != "success" ] || [ "${{ needs.nix.result }}" != "success" ]; then
             echo "Some checks failed or were cancelled"
             exit 1
           fi
