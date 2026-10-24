@@ -11,6 +11,14 @@ sed-ing the name.
 
 ## Install
 
+### Homebrew
+
+```sh
+brew install rvben/tap/clihatch
+```
+
+### Other installation methods
+
 ```sh
 cargo install clihatch
 ```
